@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const fs = require('fs');
 const { Server } = require('socket.io');
 const path = require('path');
 const roomManager = require('./game/roomManager');
@@ -14,7 +15,7 @@ const io = new Server(server, {
 });
 const roomChat = new RoomChat(roomManager);
 const cpuTurnTimers = new Map();
-const CPU_TURN_DELAY_MS = Math.max(0, Number(process.env.CPU_TURN_DELAY_MS) || 1200);
+const CPU_TURN_DELAY_MS = Math.max(0, Number(process.env.CPU_TURN_DELAY_MS) || 3500);
 const CHINCHIRO_CPU_INITIAL_DELAY_MS = Math.max(700, Number(process.env.CHINCHIRO_CPU_INITIAL_DELAY_MS) || 900);
 const CHINCHIRO_CPU_RESULT_HOLD_MS = Math.max(4000, Number(process.env.CHINCHIRO_CPU_RESULT_HOLD_MS) || 4000);
 const humanTurnTimers = new Map();
@@ -22,6 +23,18 @@ const TURN_SELECTION_TIMEOUT_MS = Math.max(100, Number(process.env.TURN_SELECTIO
 const isValidRoomId = roomId => /^\d{5}$/.test(String(roomId || '').trim());
 
 app.use(express.static(path.join(__dirname, '../public')));
+
+app.get('/__dev/css-version', (req, res) => {
+  if (process.env.NODE_ENV === 'production') return res.sendStatus(404);
+
+  const cssFiles = ['style.css', 'daifugo.css', 'chinchiro.css'];
+  Promise.all(cssFiles.map(async file => {
+    const stats = await fs.promises.stat(path.join(__dirname, '../public/css', file));
+    return `${file}:${stats.mtimeMs}`;
+  }))
+    .then(versions => res.set('Cache-Control', 'no-store').json({ version: versions.join('|') }))
+    .catch(() => res.sendStatus(404));
+});
 
 app.get('*', (req, res) => {
   if (req.path.startsWith('/css/') || req.path.startsWith('/js/') || req.path.startsWith('/socket.io')) {
@@ -125,8 +138,29 @@ function submitCpuExchangeSelections(roomId) {
   }
 }
 
+function submitCpuChinchiroBets(room) {
+  if (room?.gameType !== 'chinchiro' || room.status !== 'playing'
+    || room.chinchiroPhase !== 'betting') return false;
+
+  let didSubmit = false;
+  for (const player of room.players) {
+    if (!player.isCpu || player.id === room.chinchiroParentId
+      || Object.hasOwn(room.chinchiroBets || {}, player.id)) continue;
+    const amount = Math.min(10, Math.max(0, player.soshies || 0));
+    const result = roomManager.performGameAction(player.id, room.id, 'placeBet', amount);
+    if (result.success) didSubmit = true;
+  }
+  return didSubmit;
+}
+
 function scheduleCpuTurn(roomId) {
-  const room = roomManager.rooms[roomId];
+  let room = roomManager.rooms[roomId];
+  if (!room) return;
+  if (submitCpuChinchiroBets(room)) {
+    io.to(roomId).emit('state-updated', roomManager.getPublicState(room));
+  }
+  room = roomManager.rooms[roomId];
+  if (room.gameType === 'chinchiro' && room.chinchiroPhase !== 'rolling') return;
   const player = room?.players[room.turnIndex];
   if (!room || room.status !== 'playing' || !player?.isCpu || cpuTurnTimers.has(roomId)) return;
   clearHumanTurnTimer(roomId);
@@ -145,8 +179,7 @@ function scheduleCpuTurn(roomId) {
     }
 
     if (currentRoom.gameType === 'chinchiro') {
-      const action = currentPlayer.rollsUsed >= 3 ? 'hold' : 'roll';
-      const result = roomManager.performGameAction(currentPlayer.id, roomId, action);
+      const result = roomManager.performGameAction(currentPlayer.id, roomId, 'roll');
       if (result.success) {
         result.room.chinchiroNextCpuTurnAt = Date.now() + CHINCHIRO_CPU_RESULT_HOLD_MS;
         io.to(roomId).emit('state-updated', roomManager.getPublicState(result.room));
@@ -366,6 +399,17 @@ io.on('connection', (socket) => {
     scheduleCpuTurn(roomId);
   });
 
+  socket.on('place-chinchiro-bet', ({ roomId, amount } = {}) => {
+    const result = roomManager.performGameAction(socket.id, roomId, 'placeBet', amount);
+    if (!result.success) {
+      socket.emit('error', result.message);
+      return;
+    }
+
+    io.to(roomId).emit('state-updated', roomManager.getPublicState(result.room));
+    scheduleCpuTurn(roomId);
+  });
+
   socket.on('hold-chinchiro', (roomId) => {
     const result = roomManager.performGameAction(socket.id, roomId, 'hold');
     if (!result.success) {
@@ -374,6 +418,66 @@ io.on('connection', (socket) => {
     }
 
     io.to(roomId).emit('state-updated', roomManager.getPublicState(result.room));
+    scheduleCpuTurn(roomId);
+  });
+
+  socket.on('leave-room', (requestedRoomId) => {
+    const roomId = String(requestedRoomId || '').trim();
+    const room = roomManager.rooms[roomId];
+    const playerIndex = room?.players.findIndex(player => player.id === socket.id) ?? -1;
+    if (!room || playerIndex < 0) {
+      socket.emit('room-left', { roomId });
+      return;
+    }
+
+    clearHumanTurnTimer(roomId);
+    const cpuTimer = cpuTurnTimers.get(roomId);
+    if (cpuTimer) clearTimeout(cpuTimer);
+    cpuTurnTimers.delete(roomId);
+    if (room.pendingSideSelection?.playerId === socket.id) room.pendingSideSelection = null;
+    if (room.status === 'waiting-exchange') {
+      delete room.exchangeRequirements?.[socket.id];
+      delete room.exchangeSelections?.[socket.id];
+    }
+    if (playerIndex < room.turnIndex) room.turnIndex--;
+
+    const updatedRoom = roomManager.leaveRoom(socket.id);
+    socket.leave(roomId);
+    socket.emit('room-left', { roomId });
+    if (!updatedRoom || !updatedRoom.players.some(player => !player.isCpu)) {
+      if (updatedRoom) delete roomManager.rooms[roomId];
+      roomChat.deleteRoom(roomId);
+      clearHumanTurnTimer(roomId);
+      const remainingCpuTimer = cpuTurnTimers.get(roomId);
+      if (remainingCpuTimer) clearTimeout(remainingCpuTimer);
+      cpuTurnTimers.delete(roomId);
+      return;
+    }
+
+    if (updatedRoom.status === 'waiting-exchange') {
+      const exchangeRequirements = updatedRoom.exchangeRequirements || {};
+      const exchangeSelections = updatedRoom.exchangeSelections || {};
+      const exchangeComplete = Object.keys(exchangeRequirements).every(playerId =>
+        exchangeSelections[playerId]?.length === exchangeRequirements[playerId]
+      );
+      if (exchangeComplete) {
+        roomManager.handleCardExchange(updatedRoom, exchangeSelections);
+        updatedRoom.status = 'playing';
+        updatedRoom.exchangeRequirements = {};
+        updatedRoom.exchangeSelections = {};
+        updatedRoom.actionMessage = 'カード交換が完了しました。ゲームを開始します。';
+        completeCardExchange(updatedRoom);
+        return;
+      }
+      io.to(roomId).emit('room-updated', roomManager.getPublicState(updatedRoom));
+      submitCpuExchangeSelections(roomId);
+      return;
+    }
+
+    const publicState = roomManager.getPublicState(updatedRoom);
+    io.to(roomId).emit('room-updated', publicState);
+    io.to(roomId).emit('state-updated', publicState);
+    scheduleHumanTurnTimer(roomId);
     scheduleCpuTurn(roomId);
   });
 
@@ -462,6 +566,12 @@ io.on('connection', (socket) => {
 
     clearHumanTurnTimer(roomId);
     io.to(roomId).emit('turn-timer-paused', { roomId, playerId: currentPlayer.id });
+    io.to(roomId).emit('side-selection-started', {
+      roomId,
+      playerId: currentPlayer.id,
+      cards: playedCards,
+      requirements
+    });
   });
 
   // カードを出す (複数枚出し・ペア・革命対応)

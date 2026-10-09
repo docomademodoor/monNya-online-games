@@ -8,9 +8,18 @@ let isHost = false;
 let currentHand = [];
 let selectedCardIds = new Set();
 let pendingSideSelection = null;
+let stagedSidePlay = null;
 let pendingExchangeSelection = null;
 let activeJoinRequest = null;
 let latestGameState = null;
+let layoutPreviewMode = new URLSearchParams(window.location.search).get('preview');
+let previousRoundResult = null;
+const layoutPreviewModeGroups = [
+  { label: 'ロビー', screens: [{ value: 'home', label: 'トップ' }, { value: 'lobby', label: '待機ロビー' }] },
+  { label: '大富豪', screens: [{ value: 'game', label: '大富豪・対戦中' }, { value: 'ranking', label: '大富豪・順位確認' }, { value: 'result', label: '大富豪・対戦結果' }] },
+  { label: 'チンチロ', screens: [{ value: 'chinchiro', label: 'チンチロ・対戦中' }, { value: 'chinchiro-ranking', label: 'チンチロ・順位確認' }, { value: 'chinchiro-result', label: 'チンチロ・対戦結果' }] }
+];
+const layoutPreviewModes = layoutPreviewModeGroups.flatMap(group => group.screens.map(screen => screen.value));
 let previousFieldCards = [];
 let previousFieldCardsTimer = null;
 let turnCountdownInterval = null;
@@ -18,6 +27,8 @@ let diceRollAnimationTimer = null;
 let diceRollAnimationInterval = null;
 let isDiceRollAnimating = false;
 let isChinchiroRollPressed = false;
+let selectedChinchiroBetAmount = null;
+let selectedChinchiroBetRound = null;
 let chinchiroAwaitingRollResult = false;
 let ignoreNextChinchiroRollClick = false;
 let ignoreNextChinchiroRollClickTimer = null;
@@ -29,6 +40,26 @@ let errorTimer = null;
 let roomChatLoadedFor = '';
 let roomChatUnreadCount = 0;
 const TABLE_SEAT_GAP = 20;
+// 大富豪の表示ルール。ゲームロジックではなく、画面構成を変えるときに編集する値。
+const DAIFUGO_LAYOUT = Object.freeze({
+  maxHandCardsPerRow: 9,
+  playerSeatHeight: 112,
+  compactPlayerSeatHeight: 88,
+  playerSeatWidth: 104,
+  compactPlayerSeatWidth: 92,
+  playerCardFanWidth: 58
+});
+// 自分を除く相手プレイヤーの席順。配列の順番は自分から見た時計回り。
+// 文字列は「行-列」で、3列3行のCSS Gridへそのまま渡す。
+const DAIFUGO_OPPONENT_SEAT_PRESETS = Object.freeze({
+  1: ['1-2'],
+  2: ['1-1', '1-3'],
+  3: ['3-1', '1-2', '3-3'],
+  4: ['3-1', '1-1', '1-3', '3-3'],
+  5: ['3-1', '1-1', '1-3', '3-3'],
+  6: ['3-1', '2-1', '1-2', '2-3', '3-3'],
+  7: ['3-1', '2-1', '1-1', '1-2', '1-3', '2-3', '3-3']
+});
 const CHINCHIRO_ROLL_ANIMATION_MS = 2000;
 const CHINCHIRO_RESULT_REVEAL_MS = 2500;
 const ROOM_CHAT_MAX_LENGTH = 200;
@@ -88,22 +119,17 @@ function updateRoomChatPosition() {
     return;
   }
 
-  const turnActions = turnControls?.querySelector('.control-actions');
-  const isActionDock = window.matchMedia('(max-width: 640px)').matches
-    && !document.body.classList.contains('chinchiro-mode')
+  const isActionDock = !document.body.classList.contains('chinchiro-mode')
     && turnControls
-    && getComputedStyle(turnControls).display !== 'none'
-    && turnActions;
+    && getComputedStyle(turnControls).display !== 'none';
   root.classList.toggle('is-action-dock', !!isActionDock);
 
   if (isActionDock) {
-    const sectionRect = turnControls.getBoundingClientRect();
-    const actionsRect = turnActions.getBoundingClientRect();
     const rootControlsHeight = document.querySelector('.room-chat-controls')?.getBoundingClientRect().height || 44;
-    root.style.left = 'auto';
-    root.style.right = `${Math.max(8, window.innerWidth - sectionRect.right + 10)}px`;
-    root.style.bottom = `${Math.max(8, window.innerHeight - actionsRect.bottom)}px`;
-    root.style.setProperty('--room-chat-max-panel-height', `${Math.max(160, Math.floor(actionsRect.top - rootControlsHeight - 24))}px`);
+    root.style.left = '';
+    root.style.right = '';
+    root.style.bottom = '';
+    root.style.setProperty('--room-chat-max-panel-height', `${Math.max(160, Math.floor(window.innerHeight - rootControlsHeight - 24))}px`);
     return;
   }
 
@@ -408,8 +434,8 @@ const ROLE_CLASSES = {
 };
 
 const ROLE_POINTS = {
-  '大富豪': 2,
-  '富豪': 1,
+  '大富豪': 3,
+  '富豪': 2,
   '平民': 0,
   '貧民': -1,
   '大貧民': -2
@@ -436,29 +462,14 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => entities[character]);
 }
 
-function getOpponentSeatLayout(playerCount, index, stageWidth, seatWidth, stageHeight, fieldHeight, seatHeight) {
-  const safeCount = Math.max(1, playerCount);
-  const topRowCount = Math.ceil(safeCount / 2);
-  const isTopRow = index < topRowCount;
-  const rowIndex = isTopRow ? index : index - topRowCount;
-  const rowCount = isTopRow ? topRowCount : safeCount - topRowCount;
-  const edgePercent = (seatWidth / 2 / stageWidth) * 100;
-  const preferredRowOffset = ((fieldHeight + seatHeight) / 2 + TABLE_SEAT_GAP) / stageHeight * 100;
-  const maximumRowOffset = 50 - ((seatHeight / 2 + 8) / stageHeight) * 100;
-  const rowOffsetPercent = window.matchMedia('(max-width: 640px)').matches
-    ? Math.min(preferredRowOffset, maximumRowOffset)
-    : preferredRowOffset;
-  const x = rowCount === 1
-    ? 50
-    : edgePercent + ((100 - edgePercent * 2) * (isTopRow ? rowIndex : rowCount - rowIndex - 1)) / (rowCount - 1);
-
-  return {
-    x,
-    y: isTopRow ? 50 - rowOffsetPercent : 50 + rowOffsetPercent
-  };
+function getOpponentSeatSlot(totalPlayerCount, index) {
+  const opponentCount = Math.max(1, totalPlayerCount - 1);
+  const preset = DAIFUGO_OPPONENT_SEAT_PRESETS[opponentCount]
+    || DAIFUGO_OPPONENT_SEAT_PRESETS[8];
+  return preset[Math.min(index, preset.length - 1)];
 }
 
-function getClockwiseOpponentOrder(players, currentPlayerId) {
+function getLeftTurnOpponentOrder(players, currentPlayerId) {
   const currentPlayerIndex = players.findIndex(player => player.id === currentPlayerId);
   if (currentPlayerIndex < 0) return players.filter(player => player.id !== currentPlayerId);
 
@@ -474,6 +485,10 @@ socket.on('connect', () => {
   myId = socket.id;
   roomSyncSocketId = '';
   console.log('Socket接続成功: ID =', myId);
+  if (isLayoutPreviewEnabled()) {
+    renderLayoutPreview();
+    return;
+  }
   if (isReconnect) rejoinActiveRoom();
 });
 
@@ -666,6 +681,11 @@ socket.on('turn-timer-paused', ({ roomId }) => {
   if (roomId !== myRoomId) return;
   if (latestGameState) latestGameState.turnDeadlineAt = null;
   renderTurnCountdown(null);
+});
+
+socket.on('side-selection-started', ({ roomId, playerId, cards, requirements } = {}) => {
+  if (roomId !== myRoomId || !latestGameState || !Array.isArray(cards)) return;
+  showStagedSidePlay(playerId, cards, requirements);
 });
 
 // タブ切り替え（ルーム作成 / ルーム参加）
@@ -907,6 +927,7 @@ function resetToLobbyView() {
   resetViewportLayout();
 
   clearSelectionState();
+  previousRoundResult = null;
   pendingExchangeSelection = null;
   setRoomChatRoom('');
   latestGameState = null;
@@ -934,6 +955,7 @@ socket.on('room-updated', (roomData) => {
 });
 
 function updateWaitingRoom(room) {
+  clearPreviousRoundResultIfSeriesChanged(room);
   document.getElementById('lobby-form-area').style.display = 'none';
   document.getElementById('waiting-area').style.display = 'block';
 
@@ -965,10 +987,10 @@ function updateWaitingRoom(room) {
     `;
   }).join('');
 
+  const cpuControls = document.getElementById('cpu-controls');
   const hostControls = document.getElementById('host-controls');
   const guestMsg = document.getElementById('guest-waiting-msg');
   const startBtn = document.getElementById('start-btn');
-  const startHint = document.getElementById('host-start-hint');
   const addCpuBtn = document.getElementById('add-cpu-btn');
   const removeCpuBtn = document.getElementById('remove-cpu-btn');
   const roomLockBtn = document.getElementById('room-lock-btn');
@@ -982,6 +1004,7 @@ function updateWaitingRoom(room) {
   const amIHost = isHost || (room.hostId === currentSocketId);
 
   if (amIHost) {
+    cpuControls.style.display = 'grid';
     hostControls.style.display = 'grid';
     guestMsg.style.display = 'none';
     addCpuBtn.disabled = room.players.length >= (room.maxPlayers || 8);
@@ -990,14 +1013,9 @@ function updateWaitingRoom(room) {
     roomLockBtn.innerText = room.isLocked ? '新規参加ロックを解除' : '新規参加をロック';
     roomLockStatus.style.display = room.isLocked ? 'block' : 'none';
     roomLockStatus.innerText = room.isLocked ? 'ロック中：新しい参加者は入室できません' : '';
-    if (room.players.length >= 2) {
-      startBtn.disabled = false;
-      startHint.innerText = '準備完了！ゲームを開始できます。';
-    } else {
-      startBtn.disabled = true;
-      startHint.innerText = '2人以上揃うとゲームを開始できます（現在1人）';
-    }
+    startBtn.disabled = room.players.length < 2;
   } else {
+    cpuControls.style.display = 'none';
     hostControls.style.display = 'none';
     guestMsg.style.display = 'block';
   }
@@ -1116,9 +1134,51 @@ function nextRound() {
 // ゲーム開始通知
 function applyViewportFit() {
   const gameContainer = document.getElementById('game-container');
+  if (!gameContainer) return;
+
+  const rootStyle = getComputedStyle(document.documentElement);
+  const designWidth = Number.parseFloat(rootStyle.getPropertyValue('--phone-frame-width')) || 432;
+  const designHeight = Number.parseFloat(rootStyle.getPropertyValue('--phone-frame-height')) || 768;
+  const viewportWidth = window.visualViewport?.width || window.innerWidth;
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  const scale = Math.min(viewportWidth / designWidth, viewportHeight / designHeight);
+  const scaledWidth = designWidth * scale;
+  const scaledHeight = designHeight * scale;
+  const root = document.documentElement;
+  root.style.setProperty('--phone-frame-scale', String(scale));
+  root.style.setProperty('--daifugo-scale', String(scale));
+  root.style.setProperty('--daifugo-scaled-width', `${scaledWidth}px`);
+  root.style.setProperty('--daifugo-scaled-height', `${scaledHeight}px`);
+  root.style.setProperty('--daifugo-scaled-chat-gutter', `${8 * scale}px`);
+
+  const isGameActive = document.body.classList.contains('game-active');
+  const isChinchiro = isGameActive && document.body.classList.contains('chinchiro-mode');
+  const isActiveDaifugo = document.body.classList.contains('game-active')
+    && !isChinchiro;
+
+  if (isActiveDaifugo) {
+    gameContainer.style.display = 'block';
+    gameContainer.style.width = '';
+    gameContainer.style.margin = '';
+    document.body.style.overflow = 'hidden';
+    return;
+  }
+
+  if (!isGameActive || isChinchiro) {
+    const frame = isChinchiro ? gameContainer : document.getElementById('lobby-container');
+    if (frame) {
+      frame.style.transform = '';
+      frame.style.width = '';
+      frame.style.margin = '';
+      if (isChinchiro) frame.style.display = 'block';
+    }
+    document.body.style.overflow = 'hidden';
+    return;
+  }
+
   const isMobile = window.matchMedia('(max-width: 640px)').matches;
 
-  if (!gameContainer || gameContainer.style.display === 'none' || isMobile) {
+  if (gameContainer.style.display === 'none' || isMobile) {
     if (gameContainer) {
       gameContainer.style.transform = 'none';
       gameContainer.style.width = '';
@@ -1140,12 +1200,12 @@ function applyViewportFit() {
   const naturalHeight = 760;
   const maxScaleX = (window.innerWidth - 32) / naturalWidth;
   const maxScaleY = (window.innerHeight - 80) / naturalHeight;
-  const scale = Math.min(1, maxScaleX, maxScaleY);
+  const legacyScale = Math.min(1, maxScaleX, maxScaleY);
 
-  if (scale < 1) {
-    gameContainer.style.transform = `scale(${scale})`;
+  if (legacyScale < 1) {
+    gameContainer.style.transform = `scale(${legacyScale})`;
     gameContainer.style.transformOrigin = 'top center';
-    gameContainer.style.width = `${naturalWidth * scale}px`;
+    gameContainer.style.width = `${naturalWidth * legacyScale}px`;
     gameContainer.style.margin = '0 auto';
     document.body.style.overflow = 'hidden';
   } else {
@@ -1158,10 +1218,12 @@ function applyViewportFit() {
 
 socket.on('game-started', (data) => {
   console.log('ゲーム開始受信:', data);
+  clearPreviousRoundResultIfSeriesChanged(data);
   clearRevealedChinchiroRoll();
   if (chinchiroResultTimer) clearTimeout(chinchiroResultTimer);
   chinchiroResultTimer = null;
   latestGameState = data;
+  stagedSidePlay = null;
   myRoomId = data.roomId;
   setRoomChatRoom(myRoomId);
   document.body.classList.add('game-active');
@@ -1260,6 +1322,7 @@ socket.on('state-updated', (data) => {
   }
 
   latestGameState = data;
+  stagedSidePlay = null;
   if (didConfirmAnimatedRoll) finishChinchiroDiceAnimation(data);
   clearSelectionState();
   if (data.status === 'waiting-exchange') {
@@ -1335,6 +1398,10 @@ function updateUI(data) {
   document.querySelector('.hand-section').style.display = '';
   const currentSocketId = socket.id || myId;
   const isMyTurn = data.turnPlayerId === currentSocketId;
+  const canAct = !!pendingExchangeSelection
+    || !!pendingSideSelection
+    || (data.status === 'playing' && isMyTurn);
+  document.body.classList.toggle('has-three-row-hand', canAct && currentHand.length > 18);
   const turnInfo = document.getElementById('turn-info');
   const turnDetail = document.getElementById('turn-detail');
   const turnControl = document.querySelector('.turn-control-section');
@@ -1405,7 +1472,12 @@ function updateUI(data) {
     }
   }
 
-  actionMessage.innerText = formatGameActionMessage(data.actionMessage);
+  const currentStagedPlay = stagedSidePlay?.playerId === data.turnPlayerId ? stagedSidePlay : null;
+  if (currentStagedPlay) {
+    actionMessage.innerText = `${data.turnPlayerName || 'プレイヤー'}がカード選択中です`;
+  } else {
+    actionMessage.innerText = formatGameActionMessage(data.actionMessage);
+  }
   const hasStatus = statusTags.childElementCount > 0;
   const hasAction = actionMessage.innerText.length > 0;
   statusBanner.style.display = hasStatus ? 'flex' : 'none';
@@ -1414,9 +1486,15 @@ function updateUI(data) {
   // 場のカード表示
   const fieldEl = document.getElementById('field');
   const previousFieldEl = document.getElementById('previous-field-card');
-  const displayedFieldCards = data.fieldCards?.length > 0 ? data.fieldCards : previousFieldCards;
+  const displayedFieldCards = currentStagedPlay?.cards?.length > 0
+    ? currentStagedPlay.cards
+    : data.fieldCards?.length > 0 ? data.fieldCards : previousFieldCards;
   fieldEl.classList.toggle('is-large-group', displayedFieldCards.length > 4);
-  if (data.fieldCards && data.fieldCards.length > 0) {
+  if (currentStagedPlay?.cards?.length > 0) {
+    fieldEl.innerHTML = currentStagedPlay.cards.map(card => renderCard(card, false)).join('');
+    fieldEl.classList.remove('is-recent-clear');
+    if (previousFieldEl) previousFieldEl.style.display = 'none';
+  } else if (data.fieldCards && data.fieldCards.length > 0) {
     fieldEl.innerHTML = data.fieldCards.map(c => renderCard(c, false)).join('');
     fieldEl.classList.remove('is-recent-clear');
     if (previousFieldEl) {
@@ -1438,15 +1516,20 @@ function updateUI(data) {
 
   // 他プレイヤー情報
   const othersEl = document.getElementById('other-players');
-  const seatOrder = getClockwiseOpponentOrder(data.players, currentSocketId);
-  const seatLayoutPlayerCount = data.players.length;
+  const seatOrder = getLeftTurnOpponentOrder(data.players, currentSocketId);
+  const seatLayoutPlayerCount = Math.max(1, data.players.length - 1);
   const tableStage = document.querySelector('.table-stage');
   const fieldSection = document.querySelector('.field-section');
-  const isMobileTable = window.matchMedia('(max-width: 640px)').matches;
-  const seatCardHeight = isMobileTable ? 62 : 122;
+  const isMobileTable = window.matchMedia('(max-width: 640px)').matches
+    || (document.body.classList.contains('game-active') && !document.body.classList.contains('chinchiro-mode'));
+  const hasManyPlayers = seatLayoutPlayerCount >= 7;
+  document.body.classList.toggle('has-many-players', hasManyPlayers);
+  const seatCardHeight = isMobileTable
+    ? (hasManyPlayers ? DAIFUGO_LAYOUT.compactPlayerSeatHeight : DAIFUGO_LAYOUT.playerSeatHeight)
+    : 122;
 
   if (tableStage) {
-    if (window.matchMedia('(max-width: 640px)').matches) {
+    if (isMobileTable) {
       tableStage.style.height = '';
     } else {
       tableStage.style.height = '';
@@ -1458,25 +1541,29 @@ function updateUI(data) {
   }
 
   const stageWidth = tableStage?.clientWidth || 760;
-  const stageHeight = tableStage?.clientHeight || 360;
-  const fieldHeight = fieldSection?.offsetHeight || 120;
 
   othersEl.innerHTML = seatOrder.map((p, index) => {
     const isTurn = p.id === data.turnPlayerId;
-    const totalCardCount = p.cardCount;
-    const topRowCount = Math.ceil(seatLayoutPlayerCount / 2);
+    const stagedCardCount = stagedSidePlay?.playerId === p.id ? stagedSidePlay.cards.length : 0;
+    const totalCardCount = Math.max(0, p.cardCount - stagedCardCount);
     const seatGap = isMobileTable ? 5 : 12;
-    const seatCardWidth = Math.min(112, (stageWidth - (topRowCount - 1) * seatGap) / Math.max(topRowCount, 1));
+    const seatCardWidth = Math.min(
+      isMobileTable
+        ? (hasManyPlayers ? DAIFUGO_LAYOUT.compactPlayerSeatWidth : DAIFUGO_LAYOUT.playerSeatWidth)
+        : 112,
+      stageWidth
+    );
     const preferredSpacing = isTurn
       ? totalCardCount > 12 ? 3.2 : totalCardCount > 6 ? 4 : 4.5
       : totalCardCount > 12 ? 1.3 : 1.7;
     const stackMaxWidth = isMobileTable ? Math.max(40, seatCardWidth - 12) : 96;
     const stackWidth = Math.min(stackMaxWidth, Math.max(62, 42 + totalCardCount * 2.2));
-    const miniCardWidth = isMobileTable ? 14 : 18;
-    const miniCardHeight = isMobileTable ? 18 : 24;
-    const stackHeight = isMobileTable ? 18 : 38;
+    const miniCardWidth = isMobileTable ? (hasManyPlayers ? 22 : 28) : 36;
+    const miniCardHeight = isMobileTable ? (hasManyPlayers ? 28 : 36) : 48;
+    const stackHeight = miniCardHeight;
+    const cardSpacing = isMobileTable ? preferredSpacing * 2 : preferredSpacing;
     const spacing = Math.min(
-      preferredSpacing,
+      cardSpacing,
       Math.max(0, (stackWidth - miniCardWidth) / Math.max(totalCardCount - 1, 1))
     );
     const fanWidth = miniCardWidth + Math.max(0, totalCardCount - 1) * spacing;
@@ -1485,36 +1572,61 @@ function updateUI(data) {
       const fanAngle = isMobileTable ? 24 : 48;
       const angle = -fanAngle / 2 + (idx * (fanAngle / Math.max(totalCardCount - 1, 1)));
       const left = fanStart + idx * spacing;
-      const top = Math.round((stackHeight - miniCardHeight) / 2);
+      const top = Math.round((stackHeight - miniCardHeight) / 2) - 4;
       return `
         <span class="mini-card" style="left:${left}px; top:${top}px; z-index:${totalCardCount - idx}; transform: rotate(${angle}deg);"></span>
       `;
     }).join('');
     const countBadge = `<span class="count-stack-total">${totalCardCount}</span>`;
     const winnerText = p.isWinner ? `<span class="winner-text">🎉 ${p.rank}位</span>` : '';
-    const seatPos = getOpponentSeatLayout(
-      seatLayoutPlayerCount,
-      index,
-      stageWidth,
-      seatCardWidth,
-      stageHeight,
-      fieldHeight,
-      seatCardHeight
-    );
+    const seatSlot = getOpponentSeatSlot(data.players.length, index);
 
     return `
-      <div class="other-player-card ${isTurn ? 'active-turn' : ''}" data-seat="${index}" style="left:${seatPos.x}%; top:${seatPos.y}%; width:${seatCardWidth}px; height:${seatCardHeight}px; transform: translate(-50%, -50%);">
+      <div class="other-player-card ${isTurn ? 'active-turn' : ''}" data-seat="${index}" data-seat-slot="${seatSlot}">
         <div class="player-name-row">
           <strong>${escapeHtml(p.name)}</strong>
         </div>
-        <div class="count-stack" style="width:${stackWidth}px;" aria-label="${p.cardCount}枚残り">
+        <div class="count-stack" style="--stack-width:${stackWidth}px;" aria-label="${p.cardCount}枚残り">
           ${stackCards}
+          ${countBadge}
         </div>
-        ${countBadge}
         ${winnerText || getRoleBadge(p.role)}
       </div>
     `;
   }).join('');
+
+  const selfPlayer = data.players.find(player => player.id === currentSocketId);
+  const selfPlayerCard = document.getElementById('self-player-card');
+  if (selfPlayer && selfPlayerCard) {
+    const stagedCardCount = stagedSidePlay?.playerId === currentSocketId ? stagedSidePlay.cards.length : 0;
+    const selfCardCount = Math.max(0, (Number(selfPlayer.cardCount) || currentHand.length) - stagedCardCount);
+    const selfStackWidth = Math.min(DAIFUGO_LAYOUT.playerCardFanWidth, Math.max(28, 20 + selfCardCount * 2));
+    const miniCardWidth = 20;
+    const miniCardHeight = 20;
+    const stackHeight = 24;
+    const spacing = Math.min(2.8, Math.max(0, (selfStackWidth - miniCardWidth) / Math.max(selfCardCount - 1, 1)));
+    const fanWidth = miniCardWidth + Math.max(0, selfCardCount - 1) * spacing;
+    const fanStart = Math.max(0, (selfStackWidth - fanWidth) / 2);
+    const stackCards = Array.from({ length: selfCardCount }, (_, index) => {
+      const angle = -12 + index * (24 / Math.max(selfCardCount - 1, 1));
+      const left = fanStart + index * spacing;
+      const top = Math.round((stackHeight - miniCardHeight) / 2) - 4;
+      return `<span class="mini-card" style="left:${left}px; top:${top}px; z-index:${selfCardCount - index}; transform: rotate(${angle}deg);"></span>`;
+    }).join('');
+    const winnerText = selfPlayer.isWinner ? `<span class="winner-text">${selfPlayer.rank}位</span>` : '';
+    selfPlayerCard.className = `other-player-card self-player-card${isMyTurn ? ' active-turn' : ''}`;
+    selfPlayerCard.style.display = 'flex';
+    selfPlayerCard.innerHTML = `
+      <div class="player-name-row"><strong>${escapeHtml(selfPlayer.name)}</strong></div>
+      <div class="count-stack" style="--stack-width:${selfStackWidth}px;" aria-label="手札${selfCardCount}枚">
+        ${stackCards}
+        <span class="count-stack-total">${selfCardCount}</span>
+      </div>
+      ${winnerText || getRoleBadge(selfPlayer.role)}
+    `;
+  } else if (selfPlayerCard) {
+    selfPlayerCard.style.display = 'none';
+  }
 
   if (data.status === 'finished') {
     showGameFinished(data);
@@ -1525,11 +1637,24 @@ function updateUI(data) {
 
 function updateChinchiroUI(data) {
   const currentSocketId = socket.id || myId;
-  const isMyTurn = data.status === 'playing' && data.turnPlayerId === currentSocketId;
+  const phase = data.chinchiroPhase || 'betting';
+  const isMyTurn = data.status === 'playing' && phase === 'rolling' && data.turnPlayerId === currentSocketId;
   const currentPlayer = data.players.find(player => player.id === data.turnPlayerId);
+  const myPlayer = data.players.find(player => player.id === currentSocketId);
   const currentRound = data.status === 'finished'
     ? data.completedRounds
     : (data.completedRounds || 0) + 1;
+  const isMyBetTurn = data.status === 'playing' && phase === 'betting'
+    && currentSocketId !== data.chinchiroParentId && myPlayer?.chinchiroBet == null;
+  if (!isMyBetTurn) {
+    selectedChinchiroBetAmount = null;
+    selectedChinchiroBetRound = null;
+  } else if (selectedChinchiroBetRound !== currentRound || selectedChinchiroBetAmount === null) {
+    selectedChinchiroBetRound = currentRound;
+    selectedChinchiroBetAmount = Math.min(10, Math.max(0, myPlayer.soshies || 0));
+  } else {
+    selectedChinchiroBetAmount = Math.min(selectedChinchiroBetAmount, Math.max(0, myPlayer.soshies || 0));
+  }
   const roundHistory = (data.chinchiroHistory || [])
     .filter(entry => entry.round === currentRound);
   const latestRoll = roundHistory.at(-1);
@@ -1559,7 +1684,9 @@ function updateChinchiroUI(data) {
     .find(entry => entry.playerId === displayedPlayer?.id && (!isShowingPreviousResult || entry.id === revealedRoll.id));
   const board = document.getElementById('chinchiro-board');
   const rollButton = document.getElementById('chinchiro-roll-btn');
-  const holdButton = document.getElementById('chinchiro-hold-btn');
+  const betControls = document.getElementById('chinchiro-bet-controls');
+  const betAmount = document.getElementById('chinchiro-bet-amount');
+  const betButton = document.getElementById('chinchiro-bet-btn');
   rollButton.textContent = isChinchiroRollPressed
     ? '振っています…'
     : chinchiroAwaitingRollResult
@@ -1573,13 +1700,23 @@ function updateChinchiroUI(data) {
   document.querySelector('.turn-control-section').style.display = 'none';
   document.querySelector('.hand-section').style.display = 'none';
   board.style.display = 'block';
-  document.getElementById('chinchiro-round').textContent = `${data.completedRounds || 0} ラウンド終了`;
+  document.getElementById('chinchiro-round').textContent = data.status === 'finished'
+    ? `${data.completedRounds || 0} ラウンド終了`
+    : `${(data.completedRounds || 0) + 1} ラウンド目`;
   document.getElementById('chinchiro-history-open').textContent = `履歴 (${data.chinchiroHistory?.length || 0})`;
+  const parent = data.players.find(player => player.id === data.chinchiroParentId);
+  const myBetIsPlaced = myPlayer?.chinchiroBet != null;
   document.getElementById('chinchiro-turn-status').textContent = data.status === 'finished'
-    ? '全員の役が確定しました。次のラウンドを始められます。'
-    : isMyTurn
-      ? 'あなたの番です。3個のサイコロを振ってください。'
-      : `${currentPlayer?.name || '相手'}の番です`;
+    ? 'ラウンド終了。ソシー残高で順位が決まりました。'
+    : phase === 'betting'
+      ? isMyBetTurn
+        ? '賭けるソシーを選んでください。'
+        : myBetIsPlaced
+          ? '賭け額を確定しました。ほかの子を待っています。'
+          : `${parent?.name || '親'}が親です。子の賭けを待っています。`
+      : isMyTurn
+        ? `${currentSocketId === data.chinchiroParentId ? '親' : 'あなた'}の番です。最大3回まで振れます。`
+        : `${currentPlayer?.name || '相手'}の番です`;
   document.getElementById('chinchiro-dice').innerHTML = Array.from({ length: 3 }, (_, index) => {
     const face = dice[index] || '·';
     return `<span class="chinchiro-die${dice.length ? ' has-result' : ''}" aria-label="${face}の目">${face}</span>`;
@@ -1591,14 +1728,22 @@ function updateChinchiroUI(data) {
   document.getElementById('chinchiro-roll-count').textContent = isShowingPreviousResult
     ? `前の結果 ${visibleRollsUsed} / 3 回`
     : `${visibleRollsUsed} / 3 回`;
+  betControls.hidden = !isMyBetTurn;
+  betAmount.value = `${(selectedChinchiroBetAmount || 0).toLocaleString()} S`;
+  betAmount.textContent = betAmount.value;
+  updateChinchiroBetButton();
+  rollButton.hidden = phase !== 'rolling';
   rollButton.disabled = !isMyTurn || currentRollsUsed >= 3 || isDiceRollAnimating || isShowingPreviousResult;
-  holdButton.disabled = !isMyTurn || currentRollsUsed === 0 || isDiceRollAnimating || isShowingPreviousResult;
 
+  const turnOrder = new Map((data.chinchiroTurnOrder || []).map((playerId, index) => [playerId, index]));
   const sortedPlayers = [...data.players].sort((left, right) => {
-    if (left.rank && right.rank) return left.rank - right.rank;
-    if (left.rank) return -1;
-    if (right.rank) return 1;
-    if (left.chinchiroFinished !== right.chinchiroFinished) return left.chinchiroFinished ? -1 : 1;
+    if (data.status === 'finished' && left.rank && right.rank) return left.rank - right.rank;
+    if (data.status !== 'finished' && phase === 'rolling') {
+      return (turnOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER)
+        - (turnOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER);
+    }
+    if (left.id === data.chinchiroParentId) return -1;
+    if (right.id === data.chinchiroParentId) return 1;
     return left.name.localeCompare(right.name, 'ja');
   });
   document.getElementById('chinchiro-player-list').innerHTML = sortedPlayers.map(player => {
@@ -1607,19 +1752,27 @@ function updateChinchiroUI(data) {
       ? '振っています…'
       : data.status === 'finished'
       ? `${player.rank}位`
-      : player.chinchiroFinished
-        ? '確定'
-        : player.rollsUsed > 0
-          ? `${player.rollsUsed}/3回`
-          : '待機';
+      : phase === 'betting'
+        ? player.id === data.chinchiroParentId
+          ? '親'
+          : player.chinchiroBet != null ? '賭け済み' : '賭け待ち'
+        : player.chinchiroFinished
+          ? '確定'
+          : `${player.rollsUsed}/3回`;
     const role = isRolling ? '振っています…' : player.chinchiroHand?.label || '—';
-    const roundPoints = player.roundPoints > 0 ? `+${player.roundPoints}` : '—';
+    const roleLabel = player.id === data.chinchiroParentId ? '親' : role;
+    const betLabel = player.id === data.chinchiroParentId
+      ? '—'
+      : player.chinchiroBet == null ? '—' : player.chinchiroBet.toLocaleString();
+    const delta = Number(player.soshiesDelta) || 0;
+    const deltaLabel = delta > 0 ? `+${delta.toLocaleString()}` : delta.toLocaleString();
     return `
-      <div class="chinchiro-player-row ${player.id === currentPlayer?.id ? 'is-turn' : ''} ${player.id === currentSocketId ? 'is-me' : ''}">
+      <div class="chinchiro-player-row ${phase === 'rolling' && player.id === currentPlayer?.id ? 'is-turn' : ''} ${player.id === currentSocketId ? 'is-me' : ''}">
         <span class="chinchiro-player-name"><strong>${escapeHtml(player.name)}</strong>${player.id === currentSocketId ? '<small>あなた</small>' : ''}</span>
-        <span class="chinchiro-player-role">${escapeHtml(role)}</span>
-        <span class="chinchiro-player-points">${roundPoints}<small>今回</small></span>
-        <span class="chinchiro-player-total">${player.totalPoints || 0}<small>累計</small></span>
+        <span class="chinchiro-player-role">${escapeHtml(roleLabel)}</span>
+        <span class="chinchiro-player-bet">${betLabel}<small>賭け</small></span>
+        <span class="chinchiro-player-delta">${deltaLabel}<small>今回</small></span>
+        <span class="chinchiro-player-soshies">${(player.soshies || 0).toLocaleString()}<small>ソシー</small></span>
         <span class="chinchiro-player-status">${status}</span>
       </div>
     `;
@@ -1849,8 +2002,48 @@ function startChinchiroDiceAnimation(finalDice = null, playerId = null, waitForS
   }
 }
 
-function holdChinchiro() {
-  if (myRoomId && revealedChinchiroRollId === null) socket.emit('hold-chinchiro', myRoomId);
+function placeChinchiroBet() {
+  if (!myRoomId || latestGameState?.chinchiroPhase !== 'betting') return;
+  updateChinchiroBetButton();
+  if (document.getElementById('chinchiro-bet-btn').disabled) return;
+  socket.emit('place-chinchiro-bet', { roomId: myRoomId, amount: selectedChinchiroBetAmount });
+}
+
+function adjustChinchiroBet(step) {
+  if (latestGameState?.chinchiroPhase !== 'betting' || selectedChinchiroBetAmount === null) return;
+  const currentSocketId = socket.id || myId;
+  const player = latestGameState.players.find(candidate => candidate.id === currentSocketId);
+  const nextAmount = selectedChinchiroBetAmount + Number(step);
+  if (!Number.isSafeInteger(nextAmount) || nextAmount < 0 || nextAmount > (player?.soshies || 0)) return;
+  selectedChinchiroBetAmount = nextAmount;
+  updateChinchiroBetButton();
+}
+
+function updateChinchiroBetButton() {
+  const amountOutput = document.getElementById('chinchiro-bet-amount');
+  const button = document.getElementById('chinchiro-bet-btn');
+  const currentSocketId = socket.id || myId;
+  const player = latestGameState?.players?.find(candidate => candidate.id === currentSocketId);
+  const amount = Number(selectedChinchiroBetAmount);
+  const canBet = latestGameState?.gameType === 'chinchiro'
+    && latestGameState.status === 'playing'
+    && latestGameState.chinchiroPhase === 'betting'
+    && currentSocketId !== latestGameState.chinchiroParentId
+    && player?.chinchiroBet == null;
+  const balance = Math.max(0, Number(player?.soshies) || 0);
+  if (amountOutput) {
+    amountOutput.value = `${(Number.isSafeInteger(amount) ? amount : 0).toLocaleString()} S`;
+    amountOutput.textContent = amountOutput.value;
+  }
+  if (button) {
+    button.disabled = !canBet || !Number.isSafeInteger(amount)
+      || amount < 0 || amount > balance;
+  }
+  document.querySelectorAll('.chinchiro-bet-adjustments [data-bet-step]').forEach(stepButton => {
+    const nextAmount = amount + Number(stepButton.dataset.betStep);
+    stepButton.disabled = !canBet || !Number.isSafeInteger(nextAmount)
+      || nextAmount < 0 || nextAmount > balance;
+  });
 }
 
 function isValidPlayClient(playedCards, fieldCards, rules = {}, state = {}) {
@@ -2094,19 +2287,23 @@ function updateHand(hand) {
 
   const handSection = handEl.closest('.hand-section');
   const currentSocketId = socket.id || myId;
+  const visibleHand = pendingSideSelection
+    ? hand.filter(card => !pendingSideSelection.playedCardIds.has(card.id))
+    : hand;
   const canAct = !!latestGameState && (
     !!pendingExchangeSelection
     || !!pendingSideSelection
     || (latestGameState.status === 'playing' && latestGameState.turnPlayerId === currentSocketId)
   );
+  document.body.classList.toggle('has-three-row-hand', canAct && visibleHand.length > 18);
   handSection?.classList.toggle('is-my-turn', canAct);
   handSection?.classList.toggle('is-waiting', !!latestGameState && !canAct);
-  handEl.classList.toggle('is-multi-row', canAct && hand.length > 13);
+  handEl.classList.toggle('is-multi-row', canAct && visibleHand.length > 13);
 
-  if (hand.length === 0) {
+  if (visibleHand.length === 0) {
     handEl.innerHTML = '<div style="color: #2ecc71; font-weight: bold; font-size: 18px;">あがり！おめでとうございます！</div>';
   } else {
-    const renderedCards = hand.map(c => {
+    const renderedCards = visibleHand.map(c => {
       const isSelected = (pendingExchangeSelection && pendingExchangeSelection.selected.has(c.id))
         || (pendingSideSelection && (
           pendingSideSelection.passSelected.has(c.id) || pendingSideSelection.discardSelected.has(c.id)
@@ -2125,17 +2322,15 @@ function updateHand(hand) {
 
       return renderCard(c, true, isSelected, selectable);
     });
-    const rowSizes = renderedCards.length === 27
-      ? [13, 14]
-      : Array.from({ length: Math.ceil(renderedCards.length / 13) }, (_, rowIndex) => (
-        Math.min(13, renderedCards.length - rowIndex * 13)
-      ));
+    const cardsPerRow = DAIFUGO_LAYOUT.maxHandCardsPerRow;
+    const rowSizes = Array.from({ length: Math.ceil(renderedCards.length / cardsPerRow) }, (_, rowIndex) => (
+      Math.min(cardsPerRow, renderedCards.length - rowIndex * cardsPerRow)
+    ));
     let cardOffset = 0;
     handEl.innerHTML = rowSizes.map(rowSize => {
-      const rowClass = rowSize === 14 ? ' hand-row--14' : '';
       const rowCards = renderedCards.slice(cardOffset, cardOffset + rowSize);
       cardOffset += rowSize;
-      return `<div class="hand-row${rowClass}">${rowCards.join('')}</div>`;
+      return `<div class="hand-row">${rowCards.join('')}</div>`;
     }).join('');
   }
   updatePlayButton();
@@ -2143,9 +2338,10 @@ function updateHand(hand) {
 
 function beginSideSelection(cardsToPlay) {
   const remainingCount = currentHand.length - cardsToPlay.length;
-  const passCount = Math.min(cardsToPlay.filter(c => c.num === 7).length, remainingCount);
+  const rules = latestGameState?.rules || {};
+  const passCount = rules.sevenPass === false ? 0 : Math.min(cardsToPlay.filter(c => c.num === 7).length, remainingCount);
   const discardCount = Math.min(
-    cardsToPlay.filter(c => c.num === 10).length,
+    rules.tenDiscard === false ? 0 : cardsToPlay.filter(c => c.num === 10).length,
     remainingCount - passCount
   );
 
@@ -2162,8 +2358,15 @@ function beginSideSelection(cardsToPlay) {
     target: passCount > 0 ? 'pass' : 'discard'
   };
 
-  updateHand(currentHand);
+  showStagedSidePlay(socket.id || myId, cardsToPlay, pendingSideSelection.required);
   return null;
+}
+
+function showStagedSidePlay(playerId, cards, requirements = { pass: 0, discard: 0 }) {
+  stagedSidePlay = { playerId, cards, requirements };
+  if (!latestGameState) return;
+  updateUI(latestGameState);
+  updateHand(currentHand);
 }
 
 function finalizeSideSelection() {
@@ -2262,22 +2465,109 @@ function passTurn() {
   socket.emit('pass-turn', myRoomId);
 }
 
+function clearPreviousRoundResultIfSeriesChanged(data) {
+  if (!previousRoundResult || !data) return;
+  const previousIds = previousRoundResult.players.map(player => player.id).sort();
+  const currentIds = (data.players || []).map(player => player.id).sort();
+  const roomChanged = data.roomId && data.roomId !== previousRoundResult.roomId;
+  const roundReset = Number.isFinite(Number(data.completedRounds))
+    && Number(data.completedRounds) < previousRoundResult.completedRounds;
+
+  if (roomChanged || data.gameType !== previousRoundResult.gameType || roundReset
+    || previousIds.join('|') !== currentIds.join('|')) {
+    previousRoundResult = null;
+  }
+}
+
+function createPreviousRoundResultSnapshot(data) {
+  return {
+    roomId: data.roomId,
+    gameType: data.gameType,
+    hostId: data.hostId,
+    completedRounds: Number(data.completedRounds) || 0,
+    chinchiroParentId: data.chinchiroParentId,
+    chinchiroTurnOrder: [...(data.chinchiroTurnOrder || [])],
+    players: (data.players || []).map(player => ({
+      id: player.id,
+      name: player.name,
+      rank: player.rank,
+      role: player.role,
+      cardCount: player.cardCount,
+      totalPoints: player.totalPoints,
+      soshies: player.soshies,
+      soshiesDelta: player.soshiesDelta,
+      chinchiroHand: player.chinchiroHand ? { ...player.chinchiroHand } : null
+    }))
+  };
+}
+
+function renderRoundResultList(listElement, data) {
+  if (!data?.players?.length) {
+    listElement.innerHTML = '<p class="previous-result-empty">前回の結果はありません</p>';
+    return;
+  }
+
+  const currentSocketId = socket.id || myId;
+  let sortedPlayers;
+  if (data.gameType === 'chinchiro') {
+    const parent = data.players.find(player => player.id === data.chinchiroParentId);
+    const turnOrder = new Map((data.chinchiroTurnOrder || []).map((playerId, index) => [playerId, index]));
+    const children = data.players
+      .filter(player => player.id !== data.chinchiroParentId)
+      .sort((left, right) =>
+        (turnOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER)
+        - (turnOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+      );
+    sortedPlayers = parent ? [parent, ...children] : children;
+  } else {
+    sortedPlayers = [...data.players].sort((left, right) => {
+      if (left.rank && right.rank) return left.rank - right.rank;
+      if (left.rank) return -1;
+      if (right.rank) return 1;
+      return left.cardCount - right.cardCount;
+    });
+  }
+
+  listElement.innerHTML = sortedPlayers.map((player, index) => {
+    const rankTitle = data.gameType === 'chinchiro' && player.id === data.chinchiroParentId
+      ? '親'
+      : player.rank ? `${player.rank}位` : `${index + 1}位`;
+    const points = data.gameType === 'chinchiro'
+      ? (player.soshiesDelta || 0)
+      : (ROLE_POINTS[player.role] ?? 0);
+    const pointsLabel = points > 0 ? `+${points}` : String(points);
+    const isMe = player.id === currentSocketId;
+
+    return `
+      <div class="ranking-item rank-${player.rank || index + 1}${isMe ? ' is-me' : ''}${data.gameType === 'chinchiro' ? ' is-chinchiro' : ''}">
+        <span class="ranking-place">${rankTitle}</span>
+        <span class="ranking-player"><strong>${escapeHtml(player.name)}</strong></span>
+        ${data.gameType === 'chinchiro'
+          ? `<span class="ranking-role"><span class="chinchiro-result-badge">${escapeHtml(player.chinchiroHand?.label || player.role || '—')}</span></span>`
+          : `<span class="ranking-role">${getRoleBadge(player.role)}</span>`}
+        <span class="ranking-result-meta"><strong>${pointsLabel}</strong><small>${data.gameType === 'chinchiro' ? 'S' : 'pt'}</small></span>
+      </div>
+    `;
+  }).join('');
+}
+
 // ゲーム終了表示
 function renderOverallRanking(listElement, roundsElement, data) {
   const currentSocketId = socket.id || myId;
+  const isChinchiro = data.gameType === 'chinchiro';
+  const scoreFor = player => isChinchiro ? (player.soshies || 0) : (player.totalPoints || 0);
   const players = [...(data.players || [])].sort((a, b) =>
-    (b.totalPoints || 0) - (a.totalPoints || 0)
+    scoreFor(b) - scoreFor(a)
     || (a.rank || Number.MAX_SAFE_INTEGER) - (b.rank || Number.MAX_SAFE_INTEGER)
     || a.name.localeCompare(b.name, 'ja')
   );
 
   roundsElement.innerText = data.completedRounds
-    ? `${data.completedRounds}戦終了 · ${data.gameType === 'chinchiro' ? '順位ポイント' : '役職ポイント'}累計`
+    ? `${data.completedRounds}戦・${isChinchiro ? 'ソシー' : 'ポイント'}累計`
     : '1戦目 · 対局中';
   listElement.replaceChildren();
 
   players.forEach((player, index) => {
-    const isChinchiro = data.gameType === 'chinchiro';
     const row = document.createElement('div');
     row.className = `overall-ranking-item ${isChinchiro ? 'is-chinchiro' : ''} ${player.id === currentSocketId ? 'is-me' : ''}`;
 
@@ -2291,9 +2581,9 @@ function renderOverallRanking(listElement, roundsElement, data) {
 
     const points = document.createElement('strong');
     points.className = 'overall-points';
-    points.append(document.createTextNode(String(player.totalPoints || 0)));
+    points.append(document.createTextNode(String(scoreFor(player))));
     const unit = document.createElement('small');
-    unit.textContent = 'pt';
+    unit.textContent = isChinchiro ? 'S' : 'pt';
     points.appendChild(unit);
 
     row.append(rank, name, points);
@@ -2315,6 +2605,10 @@ function toggleOverallRanking(forceOpen) {
     document.getElementById('live-overall-ranking-list'),
     document.getElementById('live-overall-ranking-rounds'),
     latestGameState
+  );
+  renderRoundResultList(
+    document.getElementById('live-previous-result-list'),
+    previousRoundResult?.gameType === latestGameState.gameType ? previousRoundResult : null
   );
   modal.style.display = 'flex';
 }
@@ -2344,9 +2638,24 @@ function returnToRoomLobby() {
   updateWaitingRoom(room);
 }
 
+function leaveGame() {
+  if (!myRoomId || !window.confirm('このルームから退出しますか？')) return;
+  socket.emit('leave-room', myRoomId);
+}
+
+socket.on('room-left', ({ roomId } = {}) => {
+  if (!roomId || roomId !== myRoomId) return;
+  clearRecoveryState();
+  myRoomId = '';
+  isHost = false;
+  if (getRoomIdFromPath() === roomId) window.history.replaceState({}, '', '/');
+  resetToLobbyView();
+});
+
 function showGameFinished(data) {
   const modal = document.getElementById('game-finished-modal');
   document.getElementById('overall-ranking-modal').style.display = 'none';
+  previousRoundResult = createPreviousRoundResultSnapshot(data);
   if (modal.parentElement !== document.body) {
     document.body.appendChild(modal);
   }
@@ -2357,34 +2666,9 @@ function showGameFinished(data) {
   const guestNextHint = document.getElementById('guest-next-hint');
   const currentSocketId = socket.id || myId;
   document.querySelector('.result-summary').textContent = data.gameType === 'chinchiro'
-    ? '今回の順位ポイントと累計スコア'
+    ? '今回のソシー増減と残高'
     : '今回の順位と役職ポイント';
-
-  const sortedPlayers = [...data.players].sort((a, b) => {
-    if (a.rank && b.rank) return a.rank - b.rank;
-    if (a.rank) return -1;
-    if (b.rank) return 1;
-    return a.cardCount - b.cardCount;
-  });
-
-  rankingList.innerHTML = sortedPlayers.map((p, idx) => {
-    const rankTitle = p.rank ? `${p.rank}位` : `${idx + 1}位`;
-    const roundPoints = data.gameType === 'chinchiro'
-      ? (p.roundPoints || 0)
-      : (ROLE_POINTS[p.role] ?? 0);
-    const roundPointsLabel = roundPoints > 0 ? `+${roundPoints}` : String(roundPoints);
-    const isMe = p.id === currentSocketId;
-    return `
-      <div class="ranking-item rank-${p.rank || idx + 1}${isMe ? ' is-me' : ''}${data.gameType === 'chinchiro' ? ' is-chinchiro' : ''}">
-        <span class="ranking-place">${rankTitle}</span>
-        <span class="ranking-player"><strong>${escapeHtml(p.name)}</strong></span>
-        ${data.gameType === 'chinchiro'
-          ? `<span class="ranking-role"><span class="chinchiro-result-badge">${escapeHtml(p.chinchiroHand?.label || p.role || '—')}</span></span>`
-          : `<span class="ranking-role">${getRoleBadge(p.role)}</span>`}
-        <span class="ranking-result-meta"><strong>${roundPointsLabel}</strong><small>pt</small></span>
-      </div>
-    `;
-  }).join('');
+  renderRoundResultList(rankingList, data);
 
   renderOverallRanking(overallRankingList, overallRankingRounds, data);
 
@@ -2402,6 +2686,299 @@ function showGameFinished(data) {
   }
 
   modal.style.display = 'flex';
+}
+
+// 開発用プレビュー。通常対局の状態やルームには接続せず、同じ描画関数へ固定サンプルを渡す。
+function isLayoutPreviewEnabled() {
+  return layoutPreviewModes.includes(layoutPreviewMode);
+}
+
+function createLayoutPreviewState() {
+  const previewPlayerId = socket.id || myId || 'layout-preview-player';
+  const players = [
+    { id: previewPlayerId, name: 'あなた', role: '大富豪', rank: 1, cardCount: 18, totalPoints: 8 },
+    { id: 'preview-player-2', name: 'みかん', role: '富豪', rank: 2, cardCount: 12, totalPoints: 5 },
+    { id: 'preview-player-3', name: 'こはく', role: '平民', rank: 3, cardCount: 9, totalPoints: 2 },
+    { id: 'preview-player-4', name: 'しらたま', role: '平民', rank: 4, cardCount: 6, totalPoints: 1 },
+    { id: 'preview-player-5', name: 'くろまめ', role: '貧民', rank: 5, cardCount: 4, totalPoints: -2 },
+    { id: 'preview-player-6', name: 'ゆず', role: '大貧民', rank: 6, cardCount: 2, totalPoints: -4 }
+  ];
+  if (layoutPreviewMode === 'game' || layoutPreviewMode === 'ranking' || layoutPreviewMode === 'result') {
+    players.push(
+      { id: 'preview-player-7', name: 'あずき', role: '平民', rank: 7, cardCount: 1, totalPoints: -5 },
+      { id: 'preview-player-8', name: 'もなか', role: '平民', rank: 8, cardCount: 0, totalPoints: -6 }
+    );
+  }
+  const hand = Array.from({ length: 27 }, (_, index) => ({
+    id: `preview-card-${index}`,
+    suit: ['♠', '♥', '♦', '♣'][index % 4],
+    num: index % 13 + 1
+  }));
+  const status = layoutPreviewMode === 'result' ? 'finished' : 'playing';
+
+  return {
+    roomId: 'PREVIEW',
+    hostId: previewPlayerId,
+    gameType: 'daifugo',
+    status,
+    players,
+    hand,
+    turnPlayerId: previewPlayerId,
+    turnPlayerName: 'あなた',
+    fieldCards: [{ id: 'preview-field-card', suit: '♥', num: 8 }],
+    actionMessage: 'みかん が ♥8 を出しました',
+    rules: { staircase: true, fiveSkip: true, sevenPass: true, tenDiscard: true, jackBack: true },
+    completedRounds: 4,
+    roundNumber: 5,
+    isRevolution: false,
+    isElevenBack: false,
+    lockedSuit: null,
+    lockedNumber: null
+  };
+}
+
+function createLayoutChinchiroPreviewState() {
+  const previewPlayerId = socket.id || myId || 'layout-preview-player';
+  const playerIds = [previewPlayerId, 'preview-chinchiro-2', 'preview-chinchiro-3', 'preview-chinchiro-4', 'preview-chinchiro-5', 'preview-chinchiro-6'];
+  const players = [
+    { id: playerIds[0], name: 'あなた', rank: 1, soshies: 1360, soshiesDelta: 120, chinchiroBet: null, rollsUsed: 1, chinchiroHand: { label: 'シゴロ' }, dice: [4, 5, 6] },
+    { id: playerIds[1], name: 'みかん', rank: 2, soshies: 1120, soshiesDelta: 40, chinchiroBet: 100, rollsUsed: 2, chinchiroHand: { label: '目なし' }, dice: [2, 4, 1] },
+    { id: playerIds[2], name: 'こはく', rank: 3, soshies: 980, soshiesDelta: -20, chinchiroBet: 50, rollsUsed: 1, chinchiroHand: { label: 'ワンツー' }, dice: [1, 2, 5] },
+    { id: playerIds[3], name: 'しらたま', rank: 4, soshies: 840, soshiesDelta: -40, chinchiroBet: 100, rollsUsed: 3, chinchiroHand: { label: '目なし' }, dice: [2, 3, 5] },
+    { id: playerIds[4], name: 'くろまめ', rank: 5, soshies: 720, soshiesDelta: -50, chinchiroBet: 50, rollsUsed: 2, chinchiroHand: { label: 'ヒフミ' }, dice: [1, 2, 3] },
+    { id: playerIds[5], name: 'ゆず', rank: 6, soshies: 640, soshiesDelta: -50, chinchiroBet: 50, rollsUsed: 2, chinchiroHand: { label: '目なし' }, dice: [2, 4, 6] }
+  ];
+  playerIds.push('preview-chinchiro-7', 'preview-chinchiro-8');
+  players.push(
+    { id: playerIds[6], name: 'あずき', rank: 7, soshies: 520, soshiesDelta: -60, chinchiroBet: 50, rollsUsed: 3, chinchiroHand: { label: '目なし' }, dice: [2, 4, 6] },
+    { id: playerIds[7], name: 'もなか', rank: 8, soshies: 480, soshiesDelta: -80, chinchiroBet: 50, rollsUsed: 3, chinchiroHand: { label: 'ワンツー' }, dice: [1, 2, 4] }
+  );
+  const round = 5;
+  const chinchiroHistory = [
+    { id: 1, round, playerId: playerIds[1], playerName: 'みかん', dice: [2, 4, 1], label: '目なし', rollNumber: 2, confirmed: true },
+    { id: 2, round, playerId: playerIds[0], playerName: 'あなた', dice: [4, 5, 6], label: 'シゴロ', rollNumber: 1, confirmed: true }
+  ];
+
+  return {
+    roomId: 'PREVIEW',
+    hostId: previewPlayerId,
+    gameType: 'chinchiro',
+    status: layoutPreviewMode === 'chinchiro-result' ? 'finished' : 'playing',
+    players,
+    turnPlayerId: previewPlayerId,
+    chinchiroParentId: previewPlayerId,
+    chinchiroPhase: 'rolling',
+    chinchiroTurnOrder: playerIds,
+    chinchiroHistory,
+    completedRounds: layoutPreviewMode === 'chinchiro-result' ? round : round - 1
+  };
+}
+
+function renderLayoutPreviewLobby() {
+  const players = [
+    ['あなた', '大富豪'], ['みかん', '富豪'], ['こはく', '平民'], ['しらたま', '平民'],
+    ['くろまめ', '貧民'], ['ゆず', '大貧民'], ['あずき', '平民'], ['もなか', '平民']
+  ];
+  document.getElementById('display-room-id').textContent = '48216';
+  document.getElementById('display-game-type').textContent = '大富豪';
+  document.getElementById('player-count').textContent = String(players.length);
+  document.getElementById('room-max-players').textContent = '8';
+  document.getElementById('cpu-count').textContent = '0';
+  document.getElementById('display-rules').style.display = 'flex';
+  renderRuleBadges('display-rules', { staircase: true, fiveSkip: true, sevenPass: true, tenDiscard: true, jackBack: true });
+  document.getElementById('players-list').innerHTML = players.map(([name, role], index) => `
+    <div class="player-item ${index === 0 ? 'is-me' : ''}">
+      <span>${name} ${getRoleBadge(role)} ${index === 0 ? '<strong>(あなた)</strong>' : ''}</span>
+      ${index === 0 ? '<span class="host-tag">ホスト</span>' : ''}
+    </div>
+  `).join('');
+  document.getElementById('cpu-controls').style.display = 'grid';
+  document.getElementById('host-controls').style.display = 'grid';
+  document.getElementById('guest-waiting-msg').style.display = 'none';
+  document.getElementById('start-btn').disabled = false;
+  document.getElementById('add-cpu-btn').disabled = true;
+  document.getElementById('remove-cpu-btn').disabled = true;
+  document.getElementById('cpu-difficulty-select').value = 'normal';
+  document.getElementById('room-lock-status').style.display = 'none';
+  document.getElementById('room-lock-btn').dataset.locked = 'false';
+  document.getElementById('room-lock-btn').textContent = '新規参加をロック';
+}
+
+function renderLayoutPreview() {
+  if (!isLayoutPreviewEnabled()) return;
+
+  const gameContainer = document.getElementById('game-container');
+  const lobbyContainer = document.getElementById('lobby-container');
+  const lobbyFormArea = document.getElementById('lobby-form-area');
+  const waitingArea = document.getElementById('waiting-area');
+  const isLobbyPreview = layoutPreviewMode === 'home' || layoutPreviewMode === 'lobby';
+  const isChinchiroPreview = layoutPreviewMode === 'chinchiro'
+    || layoutPreviewMode === 'chinchiro-ranking'
+    || layoutPreviewMode === 'chinchiro-result';
+  if (chinchiroResultTimer) clearTimeout(chinchiroResultTimer);
+  chinchiroResultTimer = null;
+
+  myRoomId = '';
+  isHost = true;
+  document.body.classList.add('layout-preview');
+  document.body.classList.remove('revolution-mode');
+  document.documentElement.classList.remove('revolution-mode');
+  document.getElementById('room-chat-root').hidden = true;
+  ['game-finished-modal', 'rules-modal', 'overall-ranking-modal', 'chinchiro-history-modal'].forEach(id => {
+    document.getElementById(id).style.display = 'none';
+  });
+
+  if (isLobbyPreview) {
+    document.body.classList.remove('game-active', 'chinchiro-mode');
+    lobbyContainer.style.display = 'block';
+    gameContainer.style.display = 'none';
+    waitingArea.style.display = layoutPreviewMode === 'lobby' ? 'block' : 'none';
+    lobbyFormArea.style.display = layoutPreviewMode === 'home' ? 'flex' : 'none';
+    lobbyFormArea.style.flexDirection = 'column';
+    lobbyFormArea.style.width = '100%';
+    document.getElementById('form-create').style.display = 'block';
+    document.getElementById('form-join').style.display = 'none';
+    if (layoutPreviewMode === 'lobby') renderLayoutPreviewLobby();
+    applyViewportFit();
+    renderLayoutPreviewToolbar();
+    return;
+  }
+
+  document.body.classList.add('game-active');
+  document.body.classList.toggle('chinchiro-mode', isChinchiroPreview);
+  lobbyContainer.style.display = 'none';
+  gameContainer.style.display = 'block';
+  document.getElementById('game-room-id').textContent = 'PREVIEW';
+  document.getElementById('game-rules-badges').style.display = 'none';
+  clearPreviousFieldCards();
+  clearSelectionState();
+  if (isChinchiroPreview) {
+    const previewState = createLayoutChinchiroPreviewState();
+    latestGameState = previewState;
+    if (['chinchiro', 'chinchiro-ranking'].includes(layoutPreviewMode)
+      && previousRoundResult?.gameType !== previewState.gameType) {
+      previousRoundResult = createPreviousRoundResultSnapshot({
+        ...previewState,
+        status: 'finished',
+        completedRounds: previewState.completedRounds || 1
+      });
+    }
+    renderRulesModal(previewState.rules, previewState.gameType);
+    updateUI(previewState);
+    if (layoutPreviewMode === 'chinchiro-result') {
+      if (chinchiroResultTimer) clearTimeout(chinchiroResultTimer);
+      chinchiroResultTimer = null;
+      showGameFinished(previewState);
+    }
+  } else {
+    const previewState = createLayoutPreviewState();
+    latestGameState = previewState;
+    currentHand = previewState.hand;
+    if (['game', 'ranking'].includes(layoutPreviewMode)
+      && previousRoundResult?.gameType !== previewState.gameType) {
+      previousRoundResult = createPreviousRoundResultSnapshot({ ...previewState, status: 'finished' });
+    }
+    renderRulesModal(previewState.rules, previewState.gameType);
+    updateUI(previewState);
+    updateHand(currentHand);
+    if (layoutPreviewMode === 'result') showGameFinished(previewState);
+  }
+  applyViewportFit();
+  if (layoutPreviewMode === 'ranking' || layoutPreviewMode === 'chinchiro-ranking') {
+    toggleOverallRanking(true);
+  }
+  renderLayoutPreviewToolbar();
+}
+
+function setLayoutPreviewMode(mode) {
+  if (!layoutPreviewModes.includes(mode)) return;
+  layoutPreviewMode = mode;
+  const url = new URL(window.location.href);
+  url.searchParams.set('preview', mode);
+  window.history.replaceState({}, '', url);
+  renderLayoutPreview();
+}
+
+function renderLayoutPreviewToolbar() {
+  let toolbar = document.getElementById('layout-preview-toolbar');
+  if (!toolbar) {
+    toolbar = document.createElement('nav');
+    toolbar.id = 'layout-preview-toolbar';
+    toolbar.className = 'layout-preview-toolbar';
+    toolbar.setAttribute('aria-label', '画面プレビュー');
+    toolbar.innerHTML = `
+      <button class="layout-preview-drag-handle" type="button" aria-label="プレビュー操作バーをドラッグ" title="ドラッグして移動">⠿</button>
+      <strong>レイアウト確認</strong>
+      <select class="layout-preview-mode-select" data-preview-mode-select aria-label="プレビュー画面">
+        ${layoutPreviewModeGroups.map(group => `
+          <optgroup label="${group.label}">
+            ${group.screens.map(screen => `<option value="${screen.value}">${screen.label}</option>`).join('')}
+          </optgroup>
+        `).join('')}
+      </select>
+      <span class="layout-preview-css-status" role="status">CSS監視中</span>
+      <a href="/" title="プレビューを終了">終了</a>
+    `;
+    const dragHandle = toolbar.querySelector('.layout-preview-drag-handle');
+    let dragOffset = null;
+    dragHandle.addEventListener('pointerdown', event => {
+      if (event.button !== 0 && event.pointerType === 'mouse') return;
+      const rect = toolbar.getBoundingClientRect();
+      dragOffset = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      toolbar.style.left = `${rect.left}px`;
+      toolbar.style.top = `${rect.top}px`;
+      toolbar.style.transform = 'none';
+      dragHandle.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+    dragHandle.addEventListener('pointermove', event => {
+      if (!dragOffset) return;
+      const rect = toolbar.getBoundingClientRect();
+      const left = Math.max(8, Math.min(window.innerWidth - rect.width - 8, event.clientX - dragOffset.x));
+      const top = Math.max(8, Math.min(window.innerHeight - rect.height - 8, event.clientY - dragOffset.y));
+      toolbar.style.left = `${left}px`;
+      toolbar.style.top = `${top}px`;
+    });
+    const stopDragging = () => { dragOffset = null; };
+    dragHandle.addEventListener('pointerup', stopDragging);
+    dragHandle.addEventListener('pointercancel', stopDragging);
+    toolbar.addEventListener('change', event => {
+      const select = event.target.closest('[data-preview-mode-select]');
+      if (select) setLayoutPreviewMode(select.value);
+    });
+    document.body.appendChild(toolbar);
+  }
+  toolbar.querySelector('[data-preview-mode-select]').value = layoutPreviewMode;
+}
+
+function watchPreviewStylesheet() {
+  const stylesheets = [...document.querySelectorAll('link[rel="stylesheet"][href*="/css/"]')];
+  const status = document.querySelector('.layout-preview-css-status');
+  if (stylesheets.length === 0 || !status) return;
+
+  let lastVersion = null;
+  const checkForCssUpdate = async () => {
+    try {
+      const response = await fetch('/__dev/css-version', { cache: 'no-store' });
+      if (!response.ok) throw new Error('CSS version check failed');
+      const { version: currentVersion } = await response.json();
+      if (lastVersion !== null && currentVersion !== lastVersion) {
+        stylesheets.forEach(stylesheet => {
+          const nextStylesheet = new URL(stylesheet.href);
+          nextStylesheet.searchParams.set('preview-reload', Date.now());
+          stylesheet.href = nextStylesheet.href;
+        });
+        status.textContent = 'CSSを反映しました';
+        window.setTimeout(() => { status.textContent = 'CSS監視中'; }, 1500);
+      }
+      lastVersion = currentVersion;
+    } catch {
+      status.textContent = 'CSS監視を再接続中';
+    }
+  };
+
+  checkForCssUpdate();
+  window.setInterval(checkForCssUpdate, 700);
 }
 
 // Enterキーでの送信対応
@@ -2443,8 +3020,15 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   window.addEventListener('resize', applyViewportFit);
-window.addEventListener('load', () => {
-  syncRoomIdInputFromUrl();
-});
-  restoreRecoveryState();
+  window.visualViewport?.addEventListener('resize', applyViewportFit);
+  window.addEventListener('load', () => {
+    syncRoomIdInputFromUrl();
+  });
+  if (isLayoutPreviewEnabled()) {
+    renderLayoutPreview();
+    watchPreviewStylesheet();
+  } else {
+    restoreRecoveryState();
+  }
+  applyViewportFit();
 });

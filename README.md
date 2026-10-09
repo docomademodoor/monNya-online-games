@@ -120,6 +120,7 @@ npm test -- --run
 - クライアントは `public/` 配下に配置
 - サーバーは `src/server.js` と `src/game/` 配下に配置
 - ゲームロジックの回帰防止のため Vitest によるテストを実装済み
+- 大富豪画面のCSS調整は [大富豪CSS調整ガイド](docs/daifugo-css-adjustment.md) を参照
 
 ## ライセンス
 

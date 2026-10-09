@@ -7,11 +7,17 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800&amp;display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=3.77">
+  <link rel="stylesheet" href="/css/style.css?v=4.41">
+  <link rel="stylesheet" href="/css/daifugo.css?v=1.18">
+  <link rel="stylesheet" href="/css/chinchiro.css?v=1.06">
   <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
 
+  <!--
+    画面は「ロビー」と「対局」の2つを同じHTML内で切り替えます。
+    JSはdisplayを切り替えるだけにし、各画面の内部構造はここで確認できます。
+  -->
   <!-- ロビー画面（入室前・待機中） -->
   <div id="lobby-container" class="container">
     <h1 class="lobby-title">
@@ -116,11 +122,11 @@
         <section id="chinchiro-rules-section" class="rules-section chinchiro-lobby-rules-section" style="display:none;" aria-labelledby="chinchiro-lobby-rules-heading">
           <h3 id="chinchiro-lobby-rules-heading">チンチロのルール</h3>
           <ul class="chinchiro-lobby-rules">
-            <li><strong>振る</strong><span>サイコロ3個を振ります。1人最大3回で、3回目は自動確定です。</span></li>
-            <li><strong>確定</strong><span>1回目・2回目の後に「この役で確定」を選ぶと次の人へ進みます。</span></li>
-            <li><strong>役の順</strong><span>ピンゾロ ＞ シゴロ ＞ その他のゾロ目 ＞ ペア ＞ 役なし ＞ ヒフミ</span></li>
-            <li><strong>同順位</strong><span>同じ強さは同順位です。役なし同士も同順位になります。</span></li>
-            <li><strong>得点</strong><span>順位に応じて1〜参加人数分のポイントを獲得し、累計します。</span></li>
+            <li><strong>親と子</strong><span>親1人と子に分かれ、子が親にソシーを賭けます。</span></li>
+            <li><strong>振る順</strong><span>子は賭け額の少ない順に振り、親は最後に振ります。</span></li>
+            <li><strong>投数</strong><span>役が出るまで最大3回。役が出たらその時点で確定します。</span></li>
+            <li><strong>倍率</strong><span>ピンゾロ5倍、アラシ3倍、シゴロ2倍、通常役1倍。ヒフミは2倍払いです。</span></li>
+            <li><strong>勝敗</strong><span>親と子を1人ずつ比較し、同じ役なら親の勝ちです。順位はソシー残高で決まります。</span></li>
           </ul>
         </section>
 
@@ -153,49 +159,40 @@
         <div id="display-rules" class="rule-badges"></div>
       </div>
 
+      <section id="cpu-controls" class="cpu-controls" style="display:none;" aria-labelledby="cpu-management-heading">
+        <h3 id="cpu-management-heading">CPUプレイヤー</h3>
+        <div class="host-cpu-actions">
+          <label class="cpu-difficulty-control" for="cpu-difficulty-select">
+            <span>強さ</span>
+            <select id="cpu-difficulty-select" class="cpu-difficulty-select">
+              <option value="easy">かんたん</option>
+              <option value="normal" selected>ふつう</option>
+              <option value="hard">強い</option>
+              <option value="strongest">最強（カード記憶）</option>
+            </select>
+          </label>
+          <div class="cpu-action-buttons">
+            <button id="add-cpu-btn" class="secondary-btn" type="button" onclick="addCpuPlayer()" aria-label="CPUを1人追加" title="CPUを1人追加">追加</button>
+            <button id="remove-cpu-btn" class="secondary-btn" type="button" onclick="removeCpuPlayer()" aria-label="CPUを1人削除" title="CPUを1人削除" disabled>削除</button>
+          </div>
+        </div>
+      </section>
+
       <div class="players-card">
         <h3>参加プレイヤー (<span id="player-count">0</span>/<span id="room-max-players">0</span>人、CPU <span id="cpu-count">0</span>人)</h3>
         <div id="players-list" class="players-list"></div>
       </div>
 
       <div id="host-controls" class="host-controls" style="display:none;">
-        <section class="host-launch" aria-labelledby="host-start-heading">
-          <div class="host-launch-copy">
-            <h3 id="host-start-heading">対戦を開始</h3>
-            <p id="host-start-hint" class="host-start-hint">2人以上揃うとゲームを開始できます</p>
+        <section class="room-management-group" aria-labelledby="room-management-heading">
+          <h3 id="room-management-heading">ルーム管理</h3>
+          <div class="room-management-actions">
+            <button id="room-lock-btn" class="secondary-btn" type="button" onclick="toggleRoomLock()">新規参加をロック</button>
+            <button id="close-room-btn" class="danger-btn" type="button" onclick="closeCurrentRoom()">ルームを閉じる</button>
           </div>
-          <button id="start-btn" class="primary-btn host-start-btn" onclick="startGame()" disabled>ゲーム開始</button>
+          <p id="room-lock-status" class="room-lock-status" style="display:none;" role="status"></p>
         </section>
-
-        <div class="host-management">
-          <section class="host-group" aria-labelledby="cpu-management-heading">
-            <h3 id="cpu-management-heading">CPUプレイヤー</h3>
-            <div class="host-cpu-actions">
-              <label class="cpu-difficulty-control" for="cpu-difficulty-select">
-                <span>強さ</span>
-                <select id="cpu-difficulty-select" class="cpu-difficulty-select">
-                  <option value="easy">かんたん</option>
-                  <option value="normal" selected>ふつう</option>
-                  <option value="hard">強い</option>
-                  <option value="strongest">最強（カード記憶）</option>
-                </select>
-              </label>
-              <div class="cpu-action-buttons">
-                <button id="add-cpu-btn" class="secondary-btn" type="button" onclick="addCpuPlayer()" aria-label="CPUを1人追加" title="CPUを1人追加">追加</button>
-                <button id="remove-cpu-btn" class="secondary-btn" type="button" onclick="removeCpuPlayer()" aria-label="CPUを1人削除" title="CPUを1人削除" disabled>削除</button>
-              </div>
-            </div>
-          </section>
-
-          <section class="host-group room-management-group" aria-labelledby="room-management-heading">
-            <h3 id="room-management-heading">ルーム管理</h3>
-            <div class="room-management-actions">
-              <button id="room-lock-btn" class="secondary-btn" type="button" onclick="toggleRoomLock()">新規参加をロック</button>
-              <button id="close-room-btn" class="danger-btn" type="button" onclick="closeCurrentRoom()">ルームを閉じる</button>
-            </div>
-            <p id="room-lock-status" class="room-lock-status" style="display:none;" role="status"></p>
-          </section>
-        </div>
+        <button id="start-btn" class="primary-btn host-start-btn" onclick="startGame()" disabled>ゲーム開始</button>
       </div>
       <div id="guest-waiting-msg" style="display:none; margin-top: 20px;" class="hint-text">
         ホストがゲームを開始するのを待っています...
@@ -203,6 +200,16 @@
     </div>
   </div>
 
+  <!--
+    大富豪の対局画面。
+    主要な責務は次の順番です。
+    1. game-header: ルーム情報、ルール、退出
+    2. table-stage: 場、ログ、相手プレイヤー
+    3. turn-control-section: 現在の手番表示
+    4. hand-section: 自分の手札
+    5. bottom-action-dock: パス、出す、自分情報
+    チンチロも同じコンテナを使いますが、JSがchinchiro-modeを付けて切り替えます。
+  -->
   <!-- ゲーム画面 -->
   <div id="game-container" class="container" style="display:none;">
     <!-- ゲームヘッダー -->
@@ -210,8 +217,9 @@
       <div class="game-room-tag">ルームID: <span id="game-room-id"></span></div>
       <div class="game-header-actions">
         <div id="game-rules-badges" class="rule-badges"></div>
-        <button id="overall-ranking-toggle" class="secondary-btn rules-toggle-btn" type="button" onclick="toggleOverallRanking()">総合順位</button>
-        <button id="rules-toggle-btn" class="secondary-btn rules-toggle-btn" type="button" onclick="toggleRulesModal()">ルール</button>
+        <button id="overall-ranking-toggle" class="secondary-btn rules-toggle-btn preview-interactive" type="button" onclick="toggleOverallRanking()">総合順位</button>
+        <button id="rules-toggle-btn" class="secondary-btn rules-toggle-btn preview-interactive" type="button" onclick="toggleRulesModal()">ルール</button>
+        <button id="leave-game-btn" class="game-leave-btn" type="button" onclick="leaveGame()" aria-label="ルームから退出" title="ルームから退出">退出</button>
       </div>
     </div>
 
@@ -243,15 +251,27 @@
           </div>
         </div>
         <div class="chinchiro-controls">
+          <div id="chinchiro-bet-controls" class="chinchiro-bet-controls" hidden>
+            <span class="chinchiro-bet-label">賭けるソシー</span>
+            <div class="chinchiro-bet-entry">
+              <output id="chinchiro-bet-amount" class="chinchiro-bet-amount" aria-live="polite">10 S</output>
+              <div class="chinchiro-bet-adjustments" role="group" aria-label="賭け額の調整">
+                <button type="button" data-bet-step="-100" aria-label="100ソシー減らす" onclick="adjustChinchiroBet(-100)">−100</button>
+                <button type="button" data-bet-step="-10" aria-label="10ソシー減らす" onclick="adjustChinchiroBet(-10)">−10</button>
+                <button type="button" data-bet-step="10" aria-label="10ソシー増やす" onclick="adjustChinchiroBet(10)">+10</button>
+                <button type="button" data-bet-step="100" aria-label="100ソシー増やす" onclick="adjustChinchiroBet(100)">+100</button>
+              </div>
+              <button id="chinchiro-bet-btn" class="primary-btn" type="button" onclick="placeChinchiroBet()">この額を賭ける</button>
+            </div>
+          </div>
           <button id="chinchiro-roll-btn" class="primary-btn" type="button" onclick="rollChinchiro(event)" onpointerdown="pressChinchiroRoll(event)" onpointerup="releaseChinchiroRoll(event)" onpointercancel="cancelChinchiroRoll()" oncontextmenu="event.preventDefault()" onkeydown="pressChinchiroRoll(event)" onkeyup="releaseChinchiroRoll(event)">サイコロを振る</button>
-          <button id="chinchiro-hold-btn" class="secondary-btn" type="button" onclick="holdChinchiro()">この役で確定</button>
         </div>
       </div>
       <section class="chinchiro-scoreboard" aria-labelledby="chinchiro-scoreboard-heading">
         <div class="chinchiro-scoreboard-header">
           <h3 id="chinchiro-scoreboard-heading">プレイヤー</h3>
           <div class="chinchiro-scoreboard-actions">
-            <span>役 · 今回の点 · 累計</span>
+            <span>役 · 賭け · 今回増減 · ソシー残高</span>
             <button id="chinchiro-history-open" class="secondary-btn chinchiro-history-open" type="button" onclick="toggleChinchiroHistory(true)">履歴</button>
           </div>
         </div>
@@ -267,23 +287,21 @@
     </div>
 
     <div class="table-stage">
-      <!-- 場 -->
+      <!-- 場。カードとログは別要素にして、ログ表示で場の位置を動かさない。 -->
       <div class="field-section">
-        <div class="field-title">場</div>
         <div id="previous-field-card" class="previous-field-card" aria-hidden="true" style="display:none;"></div>
         <div id="field" class="field-cards"></div>
-        <p id="game-action-message" class="game-action-message" role="status" aria-live="polite"></p>
       </div>
 
-      <button id="pass-btn" class="pass-btn" onclick="passTurn()">パスする</button>
+      <p id="game-action-message" class="game-action-message" role="status" aria-live="polite"></p>
 
-      <!-- 他プレイヤー状態 -->
+      <!-- 他プレイヤー状態。座席位置はapp.jsの座席モデルをCSS座標へ反映する。 -->
       <div class="others-section">
         <div id="other-players" class="other-players-grid"></div>
       </div>
     </div>
 
-    <!-- ターン情報 & 操作ボタン -->
+    <!-- ターン情報。操作ボタンは下部ドックへ移動済み。 -->
     <div class="turn-control-section">
       <div class="turn-status-box">
         <div class="turn-status-heading">
@@ -292,12 +310,9 @@
         </div>
         <p id="turn-detail" class="turn-detail"></p>
       </div>
-      <div class="control-actions">
-        <button id="play-btn" class="play-btn" onclick="submitPlayCards()">出す (0枚)</button>
-      </div>
     </div>
 
-    <!-- 自分の手札 -->
+    <!-- 自分の手札。app.jsが9枚単位でhand-rowを生成する。 -->
     <div class="hand-section">
       <div id="hand" class="hand-cards"></div>
     </div>
@@ -307,45 +322,73 @@
       <div class="modal-content rules-modal-content">
         <div class="rules-modal-header">
           <h2>ルール一覧</h2>
-          <button type="button" class="secondary-btn" onclick="toggleRulesModal(false)">閉じる</button>
+          <button type="button" class="secondary-btn preview-interactive" onclick="toggleRulesModal(false)">閉じる</button>
         </div>
         <div id="rules-modal-body" class="rules-modal-body"></div>
       </div>
     </div>
 
     <div id="overall-ranking-modal" class="modal overall-ranking-modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="live-overall-ranking-heading" onclick="if(event.target===this) toggleOverallRanking(false)">
-      <div class="modal-content overall-ranking-modal-content">
-        <div class="rules-modal-header">
-          <div>
-            <h2 id="live-overall-ranking-heading">総合順位</h2>
-
-            <p id="live-overall-ranking-rounds" class="overall-ranking-rounds"></p>
-          </div>
+      <div class="modal-content game-finished-content live-ranking-content">
+        <header class="result-modal-header live-ranking-modal-header">
+          <h2 id="live-overall-ranking-heading">総合順位</h2>
           <button class="secondary-btn" type="button" onclick="toggleOverallRanking(false)">閉じる</button>
-        </div>
-        <div id="live-overall-ranking-list" class="overall-ranking-list"></div>
+        </header>
+
+        <section class="result-round-section" aria-labelledby="live-previous-result-heading">
+          <h3 id="live-previous-result-heading" class="result-section-heading">前回の結果</h3>
+          <p class="overall-ranking-rounds result-rounds-spacer" aria-hidden="true"></p>
+          <div id="live-previous-result-list" class="ranking-list"></div>
+        </section>
+
+        <section class="overall-ranking-section" aria-labelledby="live-overall-ranking-section-heading">
+          <h3 id="live-overall-ranking-section-heading">総合順位</h3>
+          <p id="live-overall-ranking-rounds" class="overall-ranking-rounds"></p>
+          <div id="live-overall-ranking-list" class="overall-ranking-list"></div>
+        </section>
       </div>
     </div>
 
     <!-- ゲーム終了ダイアログ -->
     <div id="game-finished-modal" class="modal" style="display:none;">
       <div class="modal-content game-finished-content">
-        <p class="result-kicker">ROUND COMPLETE</p>
-        <h2>対戦結果</h2>
-        <p class="result-summary">今回の順位と役職ポイント</p>
-        <div id="ranking-list" class="ranking-list"></div>
+        <!-- 結果画面は4ブロックに分け、CSS Gridの順番と余白を個別に調整できる。 -->
+        <header class="result-modal-header">
+          <p class="result-kicker">ROUND COMPLETE</p>
+          <h2>対戦結果</h2>
+          <p class="result-summary">今回の順位と役職ポイント</p>
+        </header>
+
+        <section class="result-round-section" aria-labelledby="result-round-heading">
+          <h3 id="result-round-heading" class="result-section-heading">今回の結果</h3>
+          <p class="overall-ranking-rounds result-rounds-spacer" aria-hidden="true"></p>
+          <div id="ranking-list" class="ranking-list"></div>
+        </section>
+
         <section class="overall-ranking-section" aria-labelledby="overall-ranking-heading">
           <h3 id="overall-ranking-heading">総合順位</h3>
           <p id="overall-ranking-rounds" class="overall-ranking-rounds"></p>
           <div id="overall-ranking-list" class="overall-ranking-list"></div>
         </section>
-        <div id="modal-next-controls" style="margin-top: 20px;">
+
+        <div id="modal-next-controls" class="result-modal-actions">
           <button id="next-game-btn" class="primary-btn" onclick="nextRound()" style="display:none;">次のゲームを開始（カード交換あり）</button>
           <div id="guest-next-hint" class="hint-text" style="display:none;">ホストが次のゲームを開始するまでお待ちください</div>
-          <button class="secondary-btn" onclick="returnToRoomLobby()" style="margin-top: 10px;">待機ルームに戻る</button>
+          <button class="secondary-btn" onclick="returnToRoomLobby()">待機ルームに戻る</button>
         </div>
       </div>
     </div>
+  </div>
+
+  <!--
+    大富豪専用の固定操作ドック。
+    game-containerの中に置かず、画面中央の432pxレールを基準に固定します。
+    z-indexは手札より下に置き、手札が上から重なることを許容します。
+  -->
+  <div id="bottom-action-dock" class="bottom-action-dock">
+    <button id="pass-btn" class="pass-btn" type="button" onclick="passTurn()">パス</button>
+    <button id="play-btn" class="play-btn" type="button" onclick="submitPlayCards()">出す (0)</button>
+    <div id="self-player-card" class="other-player-card self-player-card" style="display:none;" aria-label="自分のプレイヤー情報"></div>
   </div>
 
   <div id="chinchiro-history-modal" class="modal chinchiro-history-modal" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="chinchiro-history-heading" onclick="if(event.target===this) toggleChinchiroHistory(false)">
@@ -377,6 +420,7 @@
     <div id="join-request-notice-actions" class="join-request-notice-actions"></div>
   </aside>
 
+  <!-- チャットは対局・待機室の両方から使うため、ゲーム本体とは独立したoverlayです。 -->
   <div id="room-chat-root" class="room-chat-root" hidden>
     <section id="room-chat-panel" class="room-chat-panel" aria-label="ルームチャット" hidden>
       <header class="room-chat-header">
@@ -407,6 +451,6 @@
   </div>
 
   <script src="/js/rules.js?v=1.0"></script>
-    <script src="/js/app.js?v=2.79"></script>
+    <script src="/js/app.js?v=3.25"></script>
 </body>
 </html>

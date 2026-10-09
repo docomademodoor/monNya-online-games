@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { isCardSelectable, isValidCombination, isValidPlay } from '../public/js/rules.js';
 import RoomManager from '../src/game/roomManager.js';
 import daifugoDefinition from '../src/game/daifugo/definition.js';
-import daifugoDefinition from '../src/game/daifugo/definition.js';
 
 describe('カードルール判定', () => {
   it('数字縛りと完縛りは相互排他で両方オフも許可する', () => {
@@ -218,13 +217,6 @@ describe('カードルール判定', () => {
     expect(isCardSelectable(hand[2], hand, [], field, { numberLock: true }, state)).toBe(false);
     expect(isCardSelectable(hand[1], hand, [hand[0]], field, { numberLock: true }, state)).toBe(true);
     expect(isCardSelectable(hand[3], hand, [hand[0]], field, { numberLock: true }, state)).toBe(false);
-  });
-
-  it('数字縛りと完縛りは排他で、両方オフにもできる', () => {
-    expect(daifugoDefinition.createRules({ numberLock: true, completeLock: true }))
-      .toMatchObject({ numberLock: false, completeLock: true });
-    expect(daifugoDefinition.createRules({ numberLock: false, completeLock: false }))
-      .toMatchObject({ numberLock: false, completeLock: false });
   });
 
   it('完縛り中は同じ数字でも異なるスート構成を選べない', () => {

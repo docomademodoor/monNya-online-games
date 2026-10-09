@@ -109,15 +109,9 @@ function applyCardEffects(room, currentPlayer, playedCards, validation, selectio
   // 6. 10捨て (10を出した枚数分だけ、手札から不要なカードを破棄)
   const tenCount = countEffectiveRank(playedCards, 10);
   if (room.rules.tenDiscard && tenCount > 0) {
-    if (Array.isArray(selections.discardedCards)) {
-      selections.discardedCards.forEach(discarded => {
-        actionLogs.push(`【10捨て！】${currentPlayer.name} は ${discarded.suit}${discarded.num} を捨てました。`);
-      });
-    } else {
-      const discardCount = tenCount;
-      for (let i = 0; i < discardCount && currentPlayer.hand.length > 0; i++) {
-        const discarded = currentPlayer.hand.shift();
-        actionLogs.push(`【10捨て！】手札から ${discarded.suit}${discarded.num} を捨てました！`);
+    if (!Array.isArray(selections.discardedCards)) {
+      for (let index = 0; index < tenCount && currentPlayer.hand.length > 0; index++) {
+        currentPlayer.hand.shift();
       }
       if (currentPlayer.hand.length === 0) {
         currentPlayer.isWinner = true;

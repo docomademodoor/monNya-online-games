@@ -40,30 +40,42 @@ describe('チンチロ役判定', () => {
     expect(first.strength).toBe(second.strength);
   });
 
-  it('役なし同士は同順位・同ポイントになる', () => {
+  it('役なし同士は親勝ちでソシーを精算する', () => {
     const players = [
       {
         id: 'first',
         name: 'A',
         chinchiroHand: evaluateChinchiro([1, 4, 5]),
         chinchiroFinished: true,
-        totalPoints: 0
+        soshies: 100,
+        soshiesDelta: 0
       },
       {
         id: 'second',
         name: 'B',
         chinchiroHand: evaluateChinchiro([2, 4, 6]),
         chinchiroFinished: false,
-        totalPoints: 0
+        soshies: 100,
+        soshiesDelta: 0
       }
     ];
-    const room = { players, turnIndex: 1, completedRounds: 0, status: 'playing', winners: [] };
+    const room = {
+      players,
+      turnIndex: 1,
+      completedRounds: 0,
+      status: 'playing',
+      winners: [],
+      chinchiroParentId: 'first',
+      chinchiroBets: { second: 10 },
+      chinchiroTurnOrder: ['first', 'second']
+    };
 
     chinchiroEngine.finishTurn(room, players[1]);
 
-    expect(players.map(player => player.rank)).toEqual([1, 1]);
-    expect(players.map(player => player.roundPoints)).toEqual([2, 2]);
-    expect(room.winners.map(player => player.id)).toEqual(['first', 'second']);
+    expect(players.map(player => player.soshies)).toEqual([110, 90]);
+    expect(players.map(player => player.soshiesDelta)).toEqual([10, -10]);
+    expect(players.map(player => player.rank)).toEqual([1, 2]);
+    expect(room.winners.map(player => player.id)).toEqual(['first']);
   });
 
   it('ペアの役名は残り1個の出目を表示する', () => {

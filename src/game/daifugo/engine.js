@@ -3,8 +3,8 @@ const { isValidPlay, checkForbiddenFinish, countEffectiveRank } = require('./rul
 const { applyCardEffects, checkMiyakoOchi } = require('./cardEffects');
 
 const ROLE_POINTS = {
-  '大富豪': 2,
-  '富豪': 1,
+  '大富豪': 3,
+  '富豪': 2,
   '平民': 0,
   '貧民': -1,
   '大貧民': -2
@@ -135,7 +135,6 @@ function buildExchangePlan(room) {
 }
 
 function handleCardExchange(room, selections = {}) {
-  const exchangeLog = [];
   for (const pair of buildExchangePlan(room)) {
     const from = room.players.find(player => player.id === pair.fromId);
     const to = room.players.find(player => player.id === pair.toId);
@@ -151,11 +150,9 @@ function handleCardExchange(room, selections = {}) {
     from.hand = from.hand.filter(card => !chosenIdSet.has(card.id));
     to.hand.push(...canonicalCards);
     to.hand.sort((left, right) => left.strength - right.strength);
-    exchangeLog.push(`${from.name} が ${to.name} に ${pair.count}枚交換`);
   }
 
   room.players.forEach(player => player.hand.sort((left, right) => left.strength - right.strength));
-  if (exchangeLog.length > 0) room.actionMessage = `${exchangeLog.join('、')}しました！`;
 }
 
 function getNextTurnIndex(room, currentIndex, skipCount = 1) {
@@ -204,7 +201,7 @@ function submitExchangeCards(roomManager, socketId, { roomId, cards }) {
       && room.exchangeSelections[playerId].length === room.exchangeRequirements[playerId]
   );
   if (!allSubmitted) {
-    room.actionMessage = 'カード交換の選択待ちです…';
+    room.actionMessage = 'カード選択中です…';
     return { success: true, room, completed: false };
   }
 
@@ -366,7 +363,6 @@ function playCards(roomManager, socketId, { roomId, cards, discardCards = [], pa
     const nextPlayer = room.players[nextIndex];
     nextPlayer.hand.push(...passedCardsList);
     nextPlayer.hand.sort((left, right) => left.strength - right.strength);
-    effects.actionLogs.push(`【7渡し！】${currentPlayer.name} が ${passedCardsList.map(card => `${card.suit}${card.num}`).join('・')} を ${nextPlayer.name} に渡しました。`);
   }
 
   if (effects.clearField) {

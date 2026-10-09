@@ -1,0 +1,149 @@
+:root {
+  color-scheme: light;
+  font-family: "M PLUS Rounded 1c", "Yu Gothic", sans-serif;
+  color: #25342f;
+  background: #e9ece8;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  min-width: 320px;
+  height: 100%;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background-color: #e9ece8;
+  background-image: radial-gradient(rgba(57, 83, 70, 0.12) 0.7px, transparent 0.7px);
+  background-size: 14px 14px;
+}
+
+.preview-workbench {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  grid-template-rows: 48px minmax(0, 1fr);
+}
+
+.preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid #d0d7d1;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 1px 4px rgba(26, 43, 34, 0.08);
+}
+
+.preview-toolbar h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.preview-toolbar output {
+  color: #52635a;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-stage {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.preview-viewport {
+  position: relative;
+  width: 432px;
+  height: 720px;
+  min-width: 320px;
+  min-height: 360px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 72px);
+  overflow: hidden;
+  border: 1px solid #aab5ad;
+  border-radius: 8px;
+  background: #15381a;
+  box-shadow: 0 12px 36px rgba(31, 48, 38, 0.22);
+}
+
+.preview-viewport iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #15381a;
+}
+
+.preview-resize-handle {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  z-index: 2;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px 0 6px 0;
+  background: #f2ad42;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
+.preview-resize-handle::before,
+.preview-resize-handle::after {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 10px;
+  height: 1px;
+  background: #513813;
+  content: "";
+  transform: rotate(-45deg);
+}
+
+.preview-resize-handle::after {
+  right: 5px;
+  bottom: 10px;
+  width: 6px;
+}
+
+.preview-resize-handle:focus-visible {
+  outline: 3px solid #2b6c50;
+  outline-offset: -3px;
+}
+
+.preview-viewport.is-resizing,
+.preview-viewport.is-resizing iframe {
+  user-select: none;
+  pointer-events: none;
+}
+
+@media (max-width: 420px) {
+  .preview-toolbar {
+    padding-inline: 10px;
+  }
+
+  .preview-stage {
+    padding: 8px;
+  }
+
+  .preview-viewport {
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - 64px);
+  }
+}

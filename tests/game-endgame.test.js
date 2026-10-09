@@ -34,26 +34,6 @@ describe('勝敗・役割判定', () => {
     expect(room.status).toBe('finished');
   });
 
-  it('順位が付与され、役割が決まる', () => {
-    const room = {
-      players: [
-        { id: 'p1', name: 'A', hand: [{ id: 'x' }], rank: 1, role: null },
-        { id: 'p2', name: 'B', hand: [{ id: 'y' }], rank: 2, role: null },
-        { id: 'p3', name: 'C', hand: [{ id: 'z' }], rank: 3, role: null },
-        { id: 'p4', name: 'D', hand: [{ id: 'w' }], rank: 4, role: null }
-      ],
-      winners: [],
-      previousRoles: {}
-    };
-
-    roomManager.assignRoles(room);
-
-    expect(room.players[0].role).toBe('大富豪');
-    expect(room.players[1].role).toBe('富豪');
-    expect(room.players[2].role).toBe('貧民');
-    expect(room.players[3].role).toBe('大貧民');
-  });
-
   it('2〜6人それぞれに指定の順位役職を割り当てる', () => {
     const expectedRoles = {
       2: ['富豪', '貧民'],
@@ -81,26 +61,6 @@ describe('勝敗・役割判定', () => {
 
       expect(room.players.map(player => player.role), `${count}人戦`).toEqual(roles);
     });
-  });
-
-  it('5人戦の順位に応じて5種類の役割を割り当てる', () => {
-    const room = {
-      players: [
-        { id: 'p1', name: 'A', hand: [], rank: 1, role: null },
-        { id: 'p2', name: 'B', hand: [], rank: 2, role: null },
-        { id: 'p3', name: 'C', hand: [], rank: 3, role: null },
-        { id: 'p4', name: 'D', hand: [], rank: 4, role: null },
-        { id: 'p5', name: 'E', hand: [], rank: 5, role: null }
-      ],
-      winners: [],
-      previousRoles: {}
-    };
-
-    roomManager.assignRoles(room);
-
-    expect(room.players.map(player => player.role)).toEqual([
-      '大富豪', '富豪', '平民', '貧民', '大貧民'
-    ]);
   });
 
   it('都落ちで最下位を予約済みなら最後のプレイヤーへ未使用順位を割り当てる', () => {
@@ -144,6 +104,6 @@ describe('勝敗・役割判定', () => {
     roomManager.checkGameCompletion(room);
 
     expect(room.completedRounds).toBe(2);
-    expect(room.players.map(player => player.totalPoints)).toEqual([6, 4, 2, 0, -2]);
+    expect(room.players.map(player => player.totalPoints)).toEqual([7, 5, 2, 0, -2]);
   });
 });

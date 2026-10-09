@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>画面プレビュー | もんにゃオンラインゲーム</title>
+  <link rel="stylesheet" href="/css/layout-preview.css">
+  <script src="/js/layout-preview.js" defer></script>
+</head>
+<body>
+  <main class="preview-workbench">
+    <header class="preview-toolbar">
+      <h1>画面プレビュー</h1>
+      <output id="preview-dimensions" aria-live="polite"></output>
+    </header>
+    <section class="preview-stage" aria-label="サイズ変更可能なゲーム画面">
+      <div id="preview-viewport" class="preview-viewport">
+        <iframe id="game-preview" title="大富豪の対戦画面プレビュー"></iframe>
+        <button id="preview-resize-handle" class="preview-resize-handle" type="button" aria-label="ドラッグして画面サイズを変更"></button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

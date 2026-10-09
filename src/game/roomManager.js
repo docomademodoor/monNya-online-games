@@ -208,6 +208,11 @@ class RoomManager {
       player.rank = null;
       player.role = null;
       player.previousRole = null;
+      if (room.gameType === 'chinchiro') {
+        player.soshies = 1000;
+        player.soshiesDelta = 0;
+        player.chinchiroBet = null;
+      }
     });
   }
 

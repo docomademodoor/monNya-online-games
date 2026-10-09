@@ -324,7 +324,8 @@ describe('特殊効果テスト', () => {
 
     expect(result.success).toBe(true);
     expect(room.players[1].hand.some(c => c.id === 'pass-7')).toBe(true);
-    expect(room.actionMessage).toContain('7渡し');
+    expect(room.actionMessage).not.toContain('渡しました');
+    expect(room.actionMessage).not.toContain('♠7');
   });
 
   it('7を3枚出して残り1枚を渡した場合に上がれる', () => {
@@ -550,7 +551,9 @@ describe('特殊効果テスト', () => {
       { id: 'h10b', suit: '♦', num: 10, strength: 10 }
     ], { valid: true });
 
-    expect(result.actionLogs.join(' ')).toContain('10捨て');
+    const actionMessage = result.actionLogs.join(' ');
+    expect(actionMessage).not.toContain('10捨て');
+    expect(actionMessage).not.toContain('捨てました');
     expect(currentPlayer.hand.length).toBe(2);
   });
 
