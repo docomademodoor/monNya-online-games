@@ -210,6 +210,7 @@ class RoomManager {
       player.previousRole = null;
       if (room.gameType === 'chinchiro') {
         player.soshies = 1000;
+        player.chinchiroDebt = 0;
         player.soshiesDelta = 0;
         player.chinchiroBet = null;
       }

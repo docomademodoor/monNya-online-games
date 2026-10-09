@@ -1684,6 +1684,7 @@ function updateChinchiroUI(data) {
     .find(entry => entry.playerId === displayedPlayer?.id && (!isShowingPreviousResult || entry.id === revealedRoll.id));
   const board = document.getElementById('chinchiro-board');
   const rollButton = document.getElementById('chinchiro-roll-btn');
+  const financeControls = document.getElementById('chinchiro-finance-controls');
   const betControls = document.getElementById('chinchiro-bet-controls');
   const betAmount = document.getElementById('chinchiro-bet-amount');
   const betButton = document.getElementById('chinchiro-bet-btn');
@@ -1729,6 +1730,8 @@ function updateChinchiroUI(data) {
     ? `前の結果 ${visibleRollsUsed} / 3 回`
     : `${visibleRollsUsed} / 3 回`;
   betControls.hidden = !isMyBetTurn;
+  financeControls.hidden = data.status !== 'playing' || phase !== 'betting';
+  updateChinchiroFinanceButtons(data, myPlayer);
   betAmount.value = `${(selectedChinchiroBetAmount || 0).toLocaleString()} S`;
   betAmount.textContent = betAmount.value;
   updateChinchiroBetButton();
@@ -2007,6 +2010,53 @@ function placeChinchiroBet() {
   updateChinchiroBetButton();
   if (document.getElementById('chinchiro-bet-btn').disabled) return;
   socket.emit('place-chinchiro-bet', { roomId: myRoomId, amount: selectedChinchiroBetAmount });
+}
+
+function borrowChinchiro() {
+  updateChinchiroFinanceButtons();
+  const button = document.getElementById('chinchiro-loan-btn');
+  if (!myRoomId || button.disabled) return;
+  const amount = Number(document.getElementById('chinchiro-loan-amount').value);
+  socket.emit('borrow-chinchiro', { roomId: myRoomId, amount });
+}
+
+function repayChinchiro() {
+  updateChinchiroFinanceButtons();
+  const button = document.getElementById('chinchiro-repay-btn');
+  if (!myRoomId || button.disabled) return;
+  const amount = Number(document.getElementById('chinchiro-repay-amount').value);
+  socket.emit('repay-chinchiro', { roomId: myRoomId, amount });
+}
+
+function updateChinchiroFinanceButtons(data = latestGameState, player = null) {
+  const currentSocketId = socket.id || myId;
+  const currentPlayer = player || data?.players?.find(candidate => candidate.id === currentSocketId);
+  const debtLimit = Number(data?.chinchiroDebtLimit) || 1000;
+  const debt = Math.max(0, Number(currentPlayer?.chinchiroDebt) || 0);
+  const balance = Math.max(0, Number(currentPlayer?.soshies) || 0);
+  const borrowLimit = Math.max(0, debtLimit - debt);
+  const repayLimit = Math.min(balance, debt);
+  const canManage = data?.gameType === 'chinchiro'
+    && data.status === 'playing'
+    && data.chinchiroPhase === 'betting'
+    && !!currentPlayer;
+  const loanInput = document.getElementById('chinchiro-loan-amount');
+  const repayInput = document.getElementById('chinchiro-repay-amount');
+  const loanButton = document.getElementById('chinchiro-loan-btn');
+  const repayButton = document.getElementById('chinchiro-repay-btn');
+
+  document.getElementById('chinchiro-cash-balance').textContent = (Number(currentPlayer?.soshies) || 0).toLocaleString();
+  document.getElementById('chinchiro-debt-balance').textContent = debt.toLocaleString();
+  document.getElementById('chinchiro-interest-paid').textContent = (Number(currentPlayer?.chinchiroInterestPaid) || 0).toLocaleString();
+  document.getElementById('chinchiro-finance-limit').textContent = `借金上限 ${debtLimit.toLocaleString()} S · 翌ラウンドから${Number(data?.chinchiroInterestRate) || 10}%`;
+  loanInput.max = String(borrowLimit);
+  repayInput.max = String(repayLimit);
+  const loanAmount = Number(loanInput.value);
+  const repayAmount = Number(repayInput.value);
+  loanButton.disabled = !canManage || !Number.isSafeInteger(loanAmount)
+    || loanAmount <= 0 || loanAmount > borrowLimit;
+  repayButton.disabled = !canManage || !Number.isSafeInteger(repayAmount)
+    || repayAmount <= 0 || repayAmount > repayLimit;
 }
 
 function adjustChinchiroBet(step) {

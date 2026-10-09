@@ -9,7 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;500;700;800&amp;display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css?v=4.41">
   <link rel="stylesheet" href="/css/daifugo.css?v=1.18">
-  <link rel="stylesheet" href="/css/chinchiro.css?v=1.06">
+  <link rel="stylesheet" href="/css/chinchiro.css?v=1.07">
   <script src="/socket.io/socket.io.js"></script>
 </head>
 <body>
@@ -251,6 +251,20 @@
           </div>
         </div>
         <div class="chinchiro-controls">
+          <div id="chinchiro-finance-controls" class="chinchiro-finance-controls" hidden>
+            <div class="chinchiro-finance-summary">
+              <span>残高 <strong id="chinchiro-cash-balance">1,000</strong> S</span>
+              <span>借金 <strong id="chinchiro-debt-balance">0</strong> S</span>
+            </div>
+            <div class="chinchiro-finance-actions">
+              <label>借入 <input id="chinchiro-loan-amount" type="number" min="1" step="10" value="100" inputmode="numeric" oninput="updateChinchiroFinanceButtons()"></label>
+              <button id="chinchiro-loan-btn" class="secondary-btn" type="button" onclick="borrowChinchiro()">借りる</button>
+              <label>返済 <input id="chinchiro-repay-amount" type="number" min="1" step="10" value="100" inputmode="numeric" oninput="updateChinchiroFinanceButtons()"></label>
+              <button id="chinchiro-repay-btn" class="secondary-btn" type="button" onclick="repayChinchiro()">返す</button>
+            </div>
+            <small>今回利息 <strong id="chinchiro-interest-paid">0</strong> S</small>
+            <small id="chinchiro-finance-limit" class="chinchiro-finance-limit">借金上限 1,000 S · 翌ラウンドから10%</small>
+          </div>
           <div id="chinchiro-bet-controls" class="chinchiro-bet-controls" hidden>
             <span class="chinchiro-bet-label">賭けるソシー</span>
             <div class="chinchiro-bet-entry">
@@ -451,6 +465,6 @@
   </div>
 
   <script src="/js/rules.js?v=1.0"></script>
-    <script src="/js/app.js?v=3.25"></script>
+    <script src="/js/app.js?v=3.26"></script>
 </body>
 </html>

@@ -42,6 +42,55 @@ describe('チンチロのルーム進行', () => {
     expect(room.players.every(player => player.hand.length === 0)).toBe(true);
   });
 
+  it('賭け額確定前に借入と手動返済ができ、借金は1,000ソシーを超えない', () => {
+    const room = createPlayingRoom();
+    const guestPlayer = room.players.find(player => player.id === guest.id);
+
+    expect(roomManager.performGameAction(guest.id, roomId, 'borrow', 800).success).toBe(true);
+    expect(guestPlayer).toMatchObject({ soshies: 1800, chinchiroDebt: 800 });
+    expect(roomManager.performGameAction(guest.id, roomId, 'borrow', 300).success).toBe(false);
+    expect(roomManager.getPublicState(room).players.find(player => player.id === guest.id).chinchiroDebt).toBe(800);
+
+    expect(roomManager.performGameAction(guest.id, roomId, 'repay', 500).success).toBe(true);
+    expect(guestPlayer).toMatchObject({ soshies: 1300, chinchiroDebt: 300 });
+    expect(placeGuestBet(room, 10).success).toBe(true);
+    expect(roomManager.performGameAction(guest.id, roomId, 'borrow', 100).success).toBe(false);
+  });
+
+  it('借りたラウンドは利息なしで、次ラウンドから10%複利がかかる', () => {
+    const room = createPlayingRoom();
+    const guestPlayer = room.players.find(player => player.id === guest.id);
+    expect(roomManager.performGameAction(guest.id, roomId, 'borrow', 300).success).toBe(true);
+    expect(guestPlayer.chinchiroInterestPaid).toBe(0);
+
+    room.status = 'finished';
+    room.completedRounds = 1;
+    expect(roomManager.startGame(host.id, roomId).success).toBe(true);
+    expect(guestPlayer).toMatchObject({ chinchiroDebt: 330, chinchiroInterestPaid: 30 });
+    expect(roomManager.getPublicState(room).chinchiroInterestRate).toBe(10);
+
+    room.status = 'finished';
+    room.completedRounds = 2;
+    expect(roomManager.startGame(host.id, roomId).success).toBe(true);
+    expect(guestPlayer).toMatchObject({ chinchiroDebt: 363, chinchiroInterestPaid: 33 });
+  });
+
+  it('残高の範囲を超える返済はできず、参加者構成変更で借金がリセットされる', () => {
+    const room = createPlayingRoom();
+    const guestPlayer = room.players.find(player => player.id === guest.id);
+    guestPlayer.soshies = 20;
+    guestPlayer.chinchiroDebt = 100;
+
+    expect(roomManager.performGameAction(guest.id, roomId, 'repay', 30).success).toBe(false);
+    expect(roomManager.performGameAction(guest.id, roomId, 'repay', 20).success).toBe(true);
+    expect(guestPlayer).toMatchObject({ soshies: 0, chinchiroDebt: 80 });
+
+    room.status = 'finished';
+    room.completedRounds = 1;
+    expect(roomManager.addCpuPlayer(host.id, roomId).success).toBe(true);
+    expect(guestPlayer.chinchiroDebt).toBe(0);
+  });
+
   it('履歴が60件に達した後もロールIDが一意に増加する', () => {
     const room = createPlayingRoom();
     room.chinchiroHistory = Array.from({ length: 60 }, (_, index) => ({

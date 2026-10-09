@@ -1,5 +1,7 @@
 const { evaluateChinchiro, rollDice } = require('./rules');
 const STARTING_SOSHIES = 1000;
+const MAX_CHINCHIRO_DEBT = 1000;
+const CHINCHIRO_INTEREST_RATE = 10;
 const ROLE_MULTIPLIERS = {
   pinzoro: 5,
   triple: 3,
@@ -30,6 +32,12 @@ function startRound(roomManager, room) {
     player.rank = null;
     player.role = null;
     player.soshies ??= STARTING_SOSHIES;
+    player.chinchiroDebt ??= 0;
+    player.chinchiroInterestPaid = 0;
+    if ((room.completedRounds || 0) > 0 && player.chinchiroDebt > 0) {
+      player.chinchiroInterestPaid = Math.ceil(player.chinchiroDebt * CHINCHIRO_INTEREST_RATE / 100);
+      player.chinchiroDebt += player.chinchiroInterestPaid;
+    }
     player.soshiesDelta = 0;
     player.chinchiroBet = null;
   });
@@ -74,6 +82,49 @@ function placeBet(room, socketId, amount) {
   }
 
   return { success: true, room, completed: room.chinchiroPhase === 'rolling' };
+}
+
+function borrow(room, socketId, amount) {
+  if (!room || room.gameType !== 'chinchiro' || room.status !== 'playing'
+    || room.chinchiroPhase !== 'betting') {
+    return { success: false, message: '賭け額を決めている間だけ借りられます' };
+  }
+
+  const player = room.players.find(candidate => candidate.id === socketId);
+  if (!player) return { success: false, message: 'プレイヤーが見つかりません' };
+
+  const loan = Number(amount);
+  const debt = Math.max(0, Number(player.chinchiroDebt) || 0);
+  if (!Number.isSafeInteger(loan) || loan <= 0 || debt + loan > MAX_CHINCHIRO_DEBT) {
+    return { success: false, message: `借入額は1〜${Math.max(0, MAX_CHINCHIRO_DEBT - debt)} Sで指定してください` };
+  }
+
+  player.chinchiroDebt = debt + loan;
+  player.soshies = (Number(player.soshies) || 0) + loan;
+  room.actionMessage = `${player.name}が${loan}ソシー借りました`;
+  return { success: true, room };
+}
+
+function repay(room, socketId, amount) {
+  if (!room || room.gameType !== 'chinchiro' || room.status !== 'playing'
+    || room.chinchiroPhase !== 'betting') {
+    return { success: false, message: '賭け額を決めている間だけ返済できます' };
+  }
+
+  const player = room.players.find(candidate => candidate.id === socketId);
+  if (!player) return { success: false, message: 'プレイヤーが見つかりません' };
+
+  const payment = Number(amount);
+  const debt = Math.max(0, Number(player.chinchiroDebt) || 0);
+  const balance = Math.max(0, Number(player.soshies) || 0);
+  if (!Number.isSafeInteger(payment) || payment <= 0 || payment > debt || payment > balance) {
+    return { success: false, message: '返済額は借金と残高の範囲内で指定してください' };
+  }
+
+  player.chinchiroDebt = debt - payment;
+  player.soshies = balance - payment;
+  room.actionMessage = `${player.name}が${payment}ソシー返済しました`;
+  return { success: true, room };
 }
 
 function roll(room, socketId) {
@@ -179,7 +230,9 @@ function getPublicPlayerState(player) {
     chinchiroFinished: !!player.chinchiroFinished,
     chinchiroBet: player.chinchiroBet,
     soshies: player.soshies || 0,
-    soshiesDelta: player.soshiesDelta || 0
+    soshiesDelta: player.soshiesDelta || 0,
+    chinchiroDebt: player.chinchiroDebt || 0,
+    chinchiroInterestPaid: player.chinchiroInterestPaid || 0
   };
 }
 
@@ -196,7 +249,9 @@ function getPublicState(room) {
     chinchiroParentId: room.chinchiroParentId || null,
     chinchiroBets: room.chinchiroBets || {},
     chinchiroTurnOrder: room.chinchiroTurnOrder || [],
-    chinchiroHistory: room.chinchiroHistory || []
+    chinchiroHistory: room.chinchiroHistory || [],
+    chinchiroDebtLimit: MAX_CHINCHIRO_DEBT,
+    chinchiroInterestRate: CHINCHIRO_INTEREST_RATE
   };
 }
 
@@ -205,7 +260,7 @@ module.exports = {
   placeBet,
   roll,
   finishTurn,
-  actions: { placeBet, roll },
+  actions: { placeBet, borrow, repay, roll },
   getPublicPlayerState,
   getPublicState
 };

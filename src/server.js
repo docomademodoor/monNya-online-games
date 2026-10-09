@@ -410,6 +410,26 @@ io.on('connection', (socket) => {
     scheduleCpuTurn(roomId);
   });
 
+  socket.on('borrow-chinchiro', ({ roomId, amount } = {}) => {
+    const result = roomManager.performGameAction(socket.id, roomId, 'borrow', amount);
+    if (!result.success) {
+      socket.emit('error', result.message);
+      return;
+    }
+
+    io.to(roomId).emit('state-updated', roomManager.getPublicState(result.room));
+  });
+
+  socket.on('repay-chinchiro', ({ roomId, amount } = {}) => {
+    const result = roomManager.performGameAction(socket.id, roomId, 'repay', amount);
+    if (!result.success) {
+      socket.emit('error', result.message);
+      return;
+    }
+
+    io.to(roomId).emit('state-updated', roomManager.getPublicState(result.room));
+  });
+
   socket.on('hold-chinchiro', (roomId) => {
     const result = roomManager.performGameAction(socket.id, roomId, 'hold');
     if (!result.success) {

@@ -336,6 +336,75 @@
   gap: 5px;
 }
 
+.chinchiro-finance-controls {
+  display: grid;
+  gap: 4px;
+  padding: 5px 6px;
+  border: 1px solid rgba(199, 233, 207, 0.16);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.16);
+}
+
+.chinchiro-finance-controls[hidden] {
+  display: none;
+}
+
+.chinchiro-finance-summary,
+.chinchiro-finance-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.chinchiro-finance-summary {
+  color: rgba(231, 243, 234, 0.78);
+  font-size: 10px;
+}
+
+.chinchiro-finance-summary strong {
+  color: #f5d66e;
+  font-variant-numeric: tabular-nums;
+}
+
+.chinchiro-finance-actions {
+  align-items: center;
+}
+
+.chinchiro-finance-actions label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  color: #eff8f0;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.chinchiro-finance-actions input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 3px 4px;
+  border: 1px solid rgba(199, 233, 207, 0.25);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.24);
+  color: #f4faf5;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.chinchiro-finance-actions button {
+  min-height: 30px;
+  padding: 3px 7px;
+  font-size: 10px;
+}
+
+.chinchiro-finance-limit {
+  color: rgba(231, 243, 234, 0.55);
+  font-size: 9px;
+}
+
 .chinchiro-bet-controls[hidden] {
   display: none;
 }
