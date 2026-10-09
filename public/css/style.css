@@ -1154,12 +1154,14 @@ body.game-active #game-finished-modal .result-modal-actions button {
 
 body.game-active #game-finished-modal .result-modal-actions .secondary-btn {
   border-color: var(--result-line);
-  background: rgba(168, 79, 18, 0.1);
-  color: var(--result-accent-strong);
+  background: #245747;
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 2px 5px rgba(20, 53, 42, 0.28);
 }
 
 body.game-active #game-finished-modal .result-modal-actions .secondary-btn:hover {
-  background: rgba(168, 79, 18, 0.18);
+  background: #1b4337;
 }
 
 body.game-active #game-finished-modal .result-modal-actions .hint-text {
@@ -1246,6 +1248,11 @@ body.game-active #overall-ranking-modal .overall-ranking-item {
   min-height: 32px;
   padding: 4px 5px;
   border-radius: 4px;
+}
+
+body.game-active #game-finished-modal .overall-ranking-item.is-chinchiro,
+body.game-active #overall-ranking-modal .overall-ranking-item.is-chinchiro {
+  grid-template-columns: 18px minmax(0, 1fr) auto 40px;
 }
 
 body.game-active #game-finished-modal .overall-rank-number,
@@ -2352,6 +2359,19 @@ body:not(.game-active) #waiting-area #guest-waiting-msg {
   text-align: left;
 }
 
+.overall-ranking-item.is-chinchiro {
+  grid-template-columns: 28px minmax(0, 1fr) auto 52px;
+}
+
+.overall-ranking-item.is-chinchiro .overall-points {
+  grid-column: 4;
+}
+
+.overall-ranking-item.is-chinchiro .overall-player-debt,
+.overall-ranking-item.is-chinchiro .overall-points {
+  align-self: end;
+}
+
 .overall-ranking-item.is-me {
   border-color: rgba(74, 133, 80, 0.58);
   background: rgba(207, 231, 195, 0.62);
@@ -2365,11 +2385,28 @@ body:not(.game-active) #waiting-area #guest-waiting-msg {
 }
 
 .overall-player-name {
+  display: block;
   min-width: 0;
   overflow: hidden;
+  font-size: 13px;
+}
+
+.overall-player-name strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  font-size: inherit;
+  line-height: 1.1;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+}
+
+.overall-player-debt {
+  color: #b52e32;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
 }
 
 .overall-player-role {

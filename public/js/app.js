@@ -941,10 +941,8 @@ socket.on('room-closed', ({ roomId }) => {
   myRoomId = '';
   isHost = false;
   if (getRoomIdFromPath() === roomId) window.history.replaceState({}, '', '/');
-  ['create-room-id', 'join-room-id'].forEach(inputId => {
-    const input = document.getElementById(inputId);
-    if (input?.value.trim() === roomId) input.value = '';
-  });
+  const joinRoomInput = document.getElementById('join-room-id');
+  if (joinRoomInput?.value.trim() === roomId) joinRoomInput.value = '00000';
   resetToLobbyView();
   showError('ルームが閉じられました。ロビーに戻りました。');
 });
@@ -2579,8 +2577,10 @@ function renderRoundResultList(listElement, data) {
   }
 
   listElement.innerHTML = sortedPlayers.map((player, index) => {
-    const rankTitle = data.gameType === 'chinchiro' && player.id === data.chinchiroParentId
-      ? '親'
+    const rankTitle = data.gameType === 'chinchiro'
+      ? player.id === data.chinchiroParentId
+        ? '親'
+        : player.rank === 1 ? '1位' : ''
       : player.rank ? `${player.rank}位` : `${index + 1}位`;
     const points = data.gameType === 'chinchiro'
       ? (player.soshiesDelta || 0)
@@ -2627,7 +2627,17 @@ function renderOverallRanking(listElement, roundsElement, data) {
 
     const name = document.createElement('span');
     name.className = 'overall-player-name';
-    name.textContent = player.name;
+    const playerName = document.createElement('strong');
+    playerName.textContent = player.name;
+    name.appendChild(playerName);
+    let debtElement = null;
+    const debtAmount = Number(player.chinchiroDebt) || 0;
+    if (isChinchiro && debtAmount > 0) {
+      const debt = document.createElement('small');
+      debt.className = 'overall-player-debt';
+      debt.textContent = `${debtAmount.toLocaleString()} S`;
+      debtElement = debt;
+    }
 
     const points = document.createElement('strong');
     points.className = 'overall-points';
@@ -2636,7 +2646,9 @@ function renderOverallRanking(listElement, roundsElement, data) {
     unit.textContent = isChinchiro ? 'S' : 'pt';
     points.appendChild(unit);
 
-    row.append(rank, name, points);
+    row.append(rank, name);
+    if (debtElement) row.appendChild(debtElement);
+    row.appendChild(points);
     listElement.appendChild(row);
   });
 }
